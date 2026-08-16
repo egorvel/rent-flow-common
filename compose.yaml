@@ -1,0 +1,54 @@
+services:
+  rentflow-postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rentflow}
+      POSTGRES_USER: ${POSTGRES_USER:-rentflow_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rentflow-admin-local}
+      INVENTORY_DB_USER: ${INVENTORY_DB_USER:-inventory}
+      INVENTORY_DB_PASSWORD: ${INVENTORY_DB_PASSWORD:-inventory-local}
+      PRICING_DB_USER: ${PRICING_DB_USER:-pricing}
+      PRICING_DB_PASSWORD: ${PRICING_DB_PASSWORD:-pricing-local}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - rentflow-postgres-data:/var/lib/postgresql
+      - ../rent-flow-inventory/docker/postgres/init-inventory.sh:/docker-entrypoint-initdb.d/10-init-inventory.sh:ro
+      - ../rent-flow-pricing/docker/postgres/init-pricing.sh:/docker-entrypoint-initdb.d/20-init-pricing.sh:ro
+    healthcheck:
+      test: pg_isready --username "$${POSTGRES_USER}" --dbname "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  inventory:
+    build:
+      context: ../rent-flow-inventory
+      dockerfile: Dockerfile
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/${POSTGRES_DB:-rentflow}
+      SPRING_DATASOURCE_USERNAME: ${INVENTORY_DB_USER:-inventory}
+      SPRING_DATASOURCE_PASSWORD: ${INVENTORY_DB_PASSWORD:-inventory-local}
+    depends_on:
+      rentflow-postgres:
+        condition: service_healthy
+    ports:
+      - "${INVENTORY_PORT:-8080}:8080"
+
+  pricing:
+    build:
+      context: ../rent-flow-pricing
+      dockerfile: Dockerfile
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/${POSTGRES_DB:-rentflow}
+      SPRING_DATASOURCE_USERNAME: ${PRICING_DB_USER:-pricing}
+      SPRING_DATASOURCE_PASSWORD: ${PRICING_DB_PASSWORD:-pricing-local}
+    depends_on:
+      rentflow-postgres:
+        condition: service_healthy
+    ports:
+      - "${PRICING_PORT:-8081}:8080"
+
+volumes:
+  rentflow-postgres-data:
