@@ -8,6 +8,8 @@ readonly PRICING_PORT="${PRICING_PORT:-8081}"
 readonly INVENTORY_BASE_URL="http://localhost:${INVENTORY_PORT}"
 readonly PRICING_BASE_URL="http://localhost:${PRICING_PORT}"
 readonly SERIAL_NUMBER="SMOKE-001"
+readonly KAFKA_SMOKE_TOPIC="rentflow.smoke.events.v1"
+readonly KAFKA_SMOKE_MESSAGE='{"eventId":"SMOKE-001","eventType":"smoke-test"}'
 readonly EXPECTED_ITEM='{"serialNumber":"SMOKE-001","type":"Industrial drill","name":"Smoke drill","status":"AVAILABLE"}'
 readonly CREATE_ITEM_REQUEST='{"serialNumber":"SMOKE-001","type":"Industrial drill","name":"Smoke drill","status":"AVAILABLE"}'
 readonly EXPECTED_PRICING='{"serialNumber":"SMOKE-001","price":125.50,"weekendRate":1.2500,"longRentalCondition":7,"longRentalDiscount":0.1000,"deposit":300.00}'
@@ -150,6 +152,36 @@ assert_bootstrap_state() {
         ")"
     [[ "$table_state" == $'inventory:0\npricing:0' ]] \
         || fail "The database bootstrap created application or migration tables"
+}
+
+create_kafka_smoke_event() {
+    compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-topics.sh \
+        --bootstrap-server localhost:19092 \
+        --create \
+        --if-not-exists \
+        --topic "$KAFKA_SMOKE_TOPIC" \
+        --partitions 1 \
+        --replication-factor 1 >/dev/null
+
+    printf '%s\n' "$KAFKA_SMOKE_MESSAGE" | compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-console-producer.sh \
+        --bootstrap-server localhost:19092 \
+        --topic "$KAFKA_SMOKE_TOPIC"
+}
+
+assert_kafka_smoke_event_readable() {
+    local response
+
+    response="$(compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-console-consumer.sh \
+        --bootstrap-server localhost:19092 \
+        --topic "$KAFKA_SMOKE_TOPIC" \
+        --from-beginning \
+        --max-messages 1 \
+        --timeout-ms 10000 2>/dev/null)"
+    [[ "$response" == "$KAFKA_SMOKE_MESSAGE" ]] \
+        || fail "Kafka did not return the persisted smoke-test event"
 }
 
 assert_inventory_runtime_image() {
@@ -295,6 +327,17 @@ compose up --detach rentflow-postgres
 wait_for_service_health rentflow-postgres 60
 assert_bootstrap_state
 
+info "Starting Kafka and verifying an explicit topic round trip"
+compose up --detach rentflow-kafka
+wait_for_service_health rentflow-kafka 90
+create_kafka_smoke_event
+assert_kafka_smoke_event_readable
+
+info "Restarting Kafka and checking event persistence"
+compose restart rentflow-kafka
+wait_for_service_health rentflow-kafka 90
+assert_kafka_smoke_event_readable
+
 info "Starting Inventory and Pricing"
 compose up --detach inventory pricing
 wait_for_service_health inventory 120
@@ -336,9 +379,11 @@ info "Recreating the combined stack without deleting its volume"
 compose down --remove-orphans
 compose up --detach
 wait_for_service_health rentflow-postgres 60
+wait_for_service_health rentflow-kafka 90
 wait_for_service_health inventory 120
 wait_for_service_health pricing 120
 assert_item_readable
 assert_pricing_readable
+assert_kafka_smoke_event_readable
 
 info "Combined container smoke verification passed"

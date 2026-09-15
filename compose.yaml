@@ -25,6 +25,37 @@ services:
       retries: 10
       start_period: 10s
 
+  rentflow-kafka:
+    image: apache/kafka:4.3.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@rentflow-kafka:29093
+      KAFKA_LISTENERS: CONTROLLER://:29093,INTERNAL://:19092,HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://rentflow-kafka:19092,HOST://localhost:${KAFKA_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "${KAFKA_AUTO_CREATE_TOPICS_ENABLE:-false}"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "${KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS:-0}"
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+    ports:
+      - "127.0.0.1:${KAFKA_PORT:-9092}:9092"
+    volumes:
+      - rentflow-kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:19092 --list
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
   inventory:
     build:
       context: ../rent-flow-inventory
@@ -47,7 +78,10 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/${POSTGRES_DB:-rentflow}
       SPRING_DATASOURCE_USERNAME: ${PRICING_DB_USER:-pricing}
       SPRING_DATASOURCE_PASSWORD: ${PRICING_DB_PASSWORD:-pricing-local}
+      INVENTORY_BASE_URL: http://inventory:8080
     depends_on:
+      inventory:
+        condition: service_healthy
       rentflow-postgres:
         condition: service_healthy
     ports:
@@ -55,13 +89,16 @@ services:
 
   reservation:
     build:
-      context: .
+      context: ../rent-flow-reservation
       dockerfile: Dockerfile
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/rentflow
       SPRING_DATASOURCE_USERNAME: ${RESERVATION_DB_USER:-reservation}
       SPRING_DATASOURCE_PASSWORD: ${RESERVATION_DB_PASSWORD:-reservation-local}
+      INVENTORY_BASE_URL: http://inventory:8080
     depends_on:
+      inventory:
+        condition: service_healthy
       rentflow-postgres:
         condition: service_healthy
     ports:
@@ -69,3 +106,4 @@ services:
 
 volumes:
   rentflow-postgres-data:
+  rentflow-kafka-data:
