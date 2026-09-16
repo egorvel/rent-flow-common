@@ -10,6 +10,14 @@ readonly PRICING_BASE_URL="http://localhost:${PRICING_PORT}"
 readonly SERIAL_NUMBER="SMOKE-001"
 readonly KAFKA_SMOKE_TOPIC="rentflow.smoke.events.v1"
 readonly KAFKA_SMOKE_MESSAGE='{"eventId":"SMOKE-001","eventType":"smoke-test"}'
+readonly CANCELLATION_SERIAL_NUMBER="SMOKE-CANCEL-001"
+readonly CANCELLATION_EVENT_ID="d880f919-2b5c-4f7e-a56d-e047e7d932a6"
+readonly CANCELLATION_SOURCE_TOPIC="rentflow.reservation.cancelled.v1"
+readonly CANCELLATION_DLT_TOPIC="rentflow.inventory.reservation-cancellation.dlt.v1"
+readonly CANCELLATION_GROUP="rentflow.inventory.reservation-cancellation.v1"
+readonly CANCELLATION_EVENT='{"eventId":"d880f919-2b5c-4f7e-a56d-e047e7d932a6","eventType":"ReservationCancelled","eventVersion":1,"occurredAt":"2026-09-15T15:30:00Z","serialNumber":"SMOKE-CANCEL-001"}'
+readonly CANCELLATION_ITEM_RESERVED='{"serialNumber":"SMOKE-CANCEL-001","type":"Industrial drill","name":"Cancellation smoke drill","status":"RESERVED"}'
+readonly CANCELLATION_ITEM_AVAILABLE='{"serialNumber":"SMOKE-CANCEL-001","type":"Industrial drill","name":"Cancellation smoke drill","status":"AVAILABLE"}'
 readonly EXPECTED_ITEM='{"serialNumber":"SMOKE-001","type":"Industrial drill","name":"Smoke drill","status":"AVAILABLE"}'
 readonly CREATE_ITEM_REQUEST='{"serialNumber":"SMOKE-001","type":"Industrial drill","name":"Smoke drill","status":"AVAILABLE"}'
 readonly EXPECTED_PRICING='{"serialNumber":"SMOKE-001","price":125.50,"weekendRate":1.2500,"longRentalCondition":7,"longRentalDiscount":0.1000,"deposit":300.00}'
@@ -168,6 +176,168 @@ create_kafka_smoke_event() {
         /opt/kafka/bin/kafka-console-producer.sh \
         --bootstrap-server localhost:19092 \
         --topic "$KAFKA_SMOKE_TOPIC"
+}
+
+create_cancellation_source_topic() {
+    compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-topics.sh \
+        --bootstrap-server localhost:19092 \
+        --create \
+        --if-not-exists \
+        --topic "$CANCELLATION_SOURCE_TOPIC" \
+        --partitions 3 \
+        --replication-factor 1 \
+        --config cleanup.policy=delete \
+        --config retention.ms=604800000 >/dev/null
+}
+
+assert_cancellation_topics() {
+    local source_description
+    local source_config
+    local dlt_description
+    local dlt_config
+
+    source_description="$(compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-topics.sh \
+        --bootstrap-server localhost:19092 \
+        --describe \
+        --topic "$CANCELLATION_SOURCE_TOPIC")"
+    source_config="$(compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-configs.sh \
+        --bootstrap-server localhost:19092 \
+        --entity-type topics \
+        --entity-name "$CANCELLATION_SOURCE_TOPIC" \
+        --describe)"
+    dlt_description="$(compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-topics.sh \
+        --bootstrap-server localhost:19092 \
+        --describe \
+        --topic "$CANCELLATION_DLT_TOPIC")"
+    dlt_config="$(compose exec --no-TTY rentflow-kafka \
+        /opt/kafka/bin/kafka-configs.sh \
+        --bootstrap-server localhost:19092 \
+        --entity-type topics \
+        --entity-name "$CANCELLATION_DLT_TOPIC" \
+        --describe)"
+
+    [[ "$source_description" == *"PartitionCount: 3"* ]] \
+        || fail "Cancellation source topic does not have three partitions"
+    [[ "$source_config" == *"cleanup.policy=delete"* && "$source_config" == *"retention.ms=604800000"* ]] \
+        || fail "Cancellation source topic policy is invalid"
+    [[ "$dlt_description" == *"PartitionCount: 3"* ]] \
+        || fail "Cancellation DLT does not have three partitions"
+    [[ "$dlt_config" == *"cleanup.policy=delete"* && "$dlt_config" == *"retention.ms=2592000000"* ]] \
+        || fail "Cancellation DLT policy is invalid"
+}
+
+create_cancellation_item() {
+    local response
+
+    response="$(curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 5 \
+        --request POST \
+        --header 'Content-Type: application/json' \
+        --data "$CANCELLATION_ITEM_RESERVED" \
+        "${INVENTORY_BASE_URL}/api/v1/inventory")"
+    [[ "$response" == "$CANCELLATION_ITEM_RESERVED" ]] \
+        || fail "Cancellation smoke item was not created as RESERVED"
+}
+
+publish_cancellation_event() {
+    printf '%s|%s\n' "$CANCELLATION_SERIAL_NUMBER" "$CANCELLATION_EVENT" \
+        | compose exec --no-TTY rentflow-kafka \
+            /opt/kafka/bin/kafka-console-producer.sh \
+            --bootstrap-server localhost:19092 \
+            --topic "$CANCELLATION_SOURCE_TOPIC" \
+            --property parse.key=true \
+            --property key.separator='|'
+}
+
+wait_for_cancellation_item() {
+    local expected="$1"
+    local attempt=1
+    local response
+
+    while ((attempt <= 60)); do
+        response="$(curl \
+            --silent \
+            --show-error \
+            --max-time 2 \
+            "${INVENTORY_BASE_URL}/api/v1/inventory/${CANCELLATION_SERIAL_NUMBER}" 2>/dev/null || true)"
+        if [[ "$response" == "$expected" ]]; then
+            return
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+
+    fail "Cancellation smoke item did not reach the expected state"
+}
+
+wait_for_cancellation_group() {
+    local attempt=1
+
+    while ((attempt <= 60)); do
+        if compose exec --no-TTY rentflow-kafka sh -ec \
+            "/opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:19092 --describe --group '$CANCELLATION_GROUP' 2>/dev/null | awk '\$1 == \"$CANCELLATION_GROUP\" && \$2 == \"$CANCELLATION_SOURCE_TOPIC\" { found=1; lag += \$6 } END { exit !(found && lag == 0) }'"; then
+            return
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+
+    fail "Inventory cancellation consumer did not catch up"
+}
+
+cancellation_history() {
+    curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 5 \
+        "${INVENTORY_BASE_URL}/api/v1/inventory-history?page=0&size=100&serialNumber=${CANCELLATION_SERIAL_NUMBER}&sort=timestamp&direction=asc"
+}
+
+reserve_cancellation_item_again() {
+    local status
+
+    status="$(curl \
+        --silent \
+        --output /dev/null \
+        --write-out '%{http_code}' \
+        --max-time 5 \
+        --request PATCH \
+        --header 'Idempotency-Key: 2c7afe55-d5aa-4d3c-ac6e-8a684a322001' \
+        --header 'Content-Type: application/json' \
+        --data '[{"serialNumber":"SMOKE-CANCEL-001","status":"RESERVED"}]' \
+        "${INVENTORY_BASE_URL}/api/v1/inventory/status")"
+    [[ "$status" == "204" ]] || fail "Cancellation smoke item could not be reserved again"
+}
+
+assert_cancellation_flow() {
+    local history_after_release
+    local history_before_duplicate
+    local history_after_duplicate
+
+    create_cancellation_item
+    publish_cancellation_event
+    wait_for_cancellation_item "$CANCELLATION_ITEM_AVAILABLE"
+    wait_for_cancellation_group
+    history_after_release="$(cancellation_history)"
+    [[ "$history_after_release" == *'"serialNumber":"SMOKE-CANCEL-001","statusFrom":"RESERVED","statusTo":"AVAILABLE"'* ]] \
+        || fail "Cancellation release history is not visible through the public API"
+
+    reserve_cancellation_item_again
+    history_before_duplicate="$(cancellation_history)"
+    publish_cancellation_event
+    wait_for_cancellation_group
+    wait_for_cancellation_item "$CANCELLATION_ITEM_RESERVED"
+    history_after_duplicate="$(cancellation_history)"
+    [[ "$history_after_duplicate" == "$history_before_duplicate" ]] \
+        || fail "Duplicate cancellation created additional release history"
 }
 
 assert_kafka_smoke_event_readable() {
@@ -331,6 +501,7 @@ info "Starting Kafka and verifying an explicit topic round trip"
 compose up --detach rentflow-kafka
 wait_for_service_health rentflow-kafka 90
 create_kafka_smoke_event
+create_cancellation_source_topic
 assert_kafka_smoke_event_readable
 
 info "Restarting Kafka and checking event persistence"
@@ -344,6 +515,10 @@ wait_for_service_health inventory 120
 wait_for_service_health pricing 120
 assert_inventory_runtime_image
 assert_pricing_runtime_image
+assert_cancellation_topics
+
+info "Verifying asynchronous reservation cancellation and durable duplicate suppression"
+assert_cancellation_flow
 
 info "Creating and retrieving an inventory item and its pricing"
 create_item

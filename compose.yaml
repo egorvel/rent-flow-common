@@ -64,7 +64,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/${POSTGRES_DB:-rentflow}
       SPRING_DATASOURCE_USERNAME: ${INVENTORY_DB_USER:-inventory}
       SPRING_DATASOURCE_PASSWORD: ${INVENTORY_DB_PASSWORD:-inventory-local}
+      KAFKA_BOOTSTRAP_SERVERS: rentflow-kafka:19092
+      SPRING_PROFILES_ACTIVE: local
     depends_on:
+      rentflow-kafka:
+        condition: service_healthy
       rentflow-postgres:
         condition: service_healthy
     ports:
