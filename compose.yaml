@@ -100,8 +100,12 @@ services:
       SPRING_DATASOURCE_USERNAME: ${RESERVATION_DB_USER:-reservation}
       SPRING_DATASOURCE_PASSWORD: ${RESERVATION_DB_PASSWORD:-reservation-local}
       INVENTORY_BASE_URL: http://inventory:8080
+      KAFKA_BOOTSTRAP_SERVERS: rentflow-kafka:19092
+      SPRING_PROFILES_ACTIVE: local
     depends_on:
       inventory:
+        condition: service_healthy
+      rentflow-kafka:
         condition: service_healthy
       rentflow-postgres:
         condition: service_healthy

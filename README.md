@@ -122,3 +122,14 @@ Port `29093` is private controller traffic and must not be used by applications.
 
 Automatic topic creation is disabled deliberately. A misspelled topic must fail visibly instead of silently
 creating a topic with accidental defaults.
+
+## Combined cancellation flow
+
+The combined Compose stack supplies Reservation with `rentflow-kafka:19092` and the `local`
+profile. Reservation owns local creation of `rentflow.reservation.cancelled.v1`; Inventory owns
+its consumer group and dead-letter topic. `POST /api/v1/reservations/{id}/cancel` commits the local
+status/outbox transaction before returning `204`, and Inventory releases the item asynchronously.
+
+Run `./scripts/container-smoke-test.sh` to build all three services and verify the complete public
+API → Reservation outbox → Kafka → Inventory path, including duplicate suppression and persistence
+across restarts.
