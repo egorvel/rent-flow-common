@@ -129,7 +129,12 @@ The combined Compose stack supplies Reservation with `rentflow-kafka:19092` and 
 profile. Reservation owns local creation of `rentflow.reservation.cancelled.v1`; Inventory owns
 its consumer group and dead-letter topic. `POST /api/v1/reservations/{id}/cancel` commits the local
 status/outbox transaction before returning `204`, and Inventory releases the item asynchronously.
+New `HELD` reservations also expire automatically after their immutable deadline and use the same
+outbox/Kafka/Inventory path; `CONFIRMED` reservations are excluded. Compose defaults the hold
+duration to the service's production-like `10m`, while the combined smoke script overrides it to
+`15s` so it can verify the timed flow without waiting ten minutes.
 
 Run `./scripts/container-smoke-test.sh` to build all three services and verify the complete public
 API → Reservation outbox → Kafka → Inventory path, including duplicate suppression and persistence
-across restarts.
+across restarts. It also verifies timed cancellation releases Inventory and that an elapsed
+`CONFIRMED` reservation remains reserved.

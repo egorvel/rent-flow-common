@@ -20,11 +20,19 @@ readonly CANCELLATION_CREATION_KEY="d880f919-2b5c-4f7e-a56d-e047e7d932a6"
 readonly CANCELLATION_CREATION_REQUEST='{"customerId":"SMOKE-CUSTOMER","orderId":"SMOKE-ORDER","items":[{"serialNumber":"SMOKE-CANCEL-001","startDate":"9999-12-30","endDate":"9999-12-31"}]}'
 readonly CANCELLATION_ITEM_RESERVED='{"serialNumber":"SMOKE-CANCEL-001","type":"Industrial drill","name":"Cancellation smoke drill","status":"RESERVED"}'
 readonly CANCELLATION_ITEM_AVAILABLE='{"serialNumber":"SMOKE-CANCEL-001","type":"Industrial drill","name":"Cancellation smoke drill","status":"AVAILABLE"}'
+readonly EXPIRATION_SERIAL_NUMBER="SMOKE-EXPIRE-001"
+readonly EXPIRATION_CONFIRMED_SERIAL_NUMBER="SMOKE-EXPIRE-CONFIRMED-001"
+readonly EXPIRATION_ITEM_AVAILABLE='{"serialNumber":"SMOKE-EXPIRE-001","type":"Industrial drill","name":"Expiration smoke drill","status":"AVAILABLE"}'
+readonly EXPIRATION_CONFIRMED_ITEM_AVAILABLE='{"serialNumber":"SMOKE-EXPIRE-CONFIRMED-001","type":"Industrial drill","name":"Confirmed expiration smoke drill","status":"AVAILABLE"}'
 readonly EXPECTED_ITEM='{"serialNumber":"SMOKE-001","type":"Industrial drill","name":"Smoke drill","status":"AVAILABLE"}'
 readonly CREATE_ITEM_REQUEST='{"serialNumber":"SMOKE-001","type":"Industrial drill","name":"Smoke drill","status":"AVAILABLE"}'
 readonly EXPECTED_PRICING='{"serialNumber":"SMOKE-001","price":125.50,"weekendRate":1.2500,"longRentalCondition":7,"longRentalDiscount":0.1000,"deposit":300.00}'
 readonly CREATE_PRICING_REQUEST='{"serialNumber":"SMOKE-001","price":125.50,"weekendRate":1.2500,"longRentalCondition":7,"longRentalDiscount":0.1000,"deposit":300.00}'
 CANCELLATION_RESERVATION_ID=""
+EXPIRATION_RESERVATION_ID=""
+EXPIRATION_CONFIRMED_RESERVATION_ID=""
+
+export RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION="15s"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -390,6 +398,146 @@ assert_cancellation_flow() {
         || fail "Duplicate cancellation created additional release history"
 }
 
+create_expiration_item() {
+    local request="$1"
+
+    curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 5 \
+        --request POST \
+        --header 'Content-Type: application/json' \
+        --data "$request" \
+        "${INVENTORY_BASE_URL}/api/v1/inventory" >/dev/null
+}
+
+create_expiration_reservation() {
+    local serial_number="$1"
+    local idempotency_key="$2"
+    local response
+
+    response="$(curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        --request POST \
+        --header 'Content-Type: application/json' \
+        --header "Idempotency-Key: $idempotency_key" \
+        --data "{\"customerId\":\"SMOKE-CUSTOMER\",\"orderId\":\"SMOKE-EXPIRATION\",\"items\":[{\"serialNumber\":\"$serial_number\",\"startDate\":\"9999-12-30\",\"endDate\":\"9999-12-31\"}]}" \
+        "${RESERVATION_BASE_URL}/api/v1/reservations")"
+    printf '%s' "$response" | jq -er '.[0] | select(.status == "HELD" and (.holdExpiresAt | type == "string")) | .id'
+}
+
+confirm_expiration_reservation() {
+    curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        --request PUT \
+        --header 'Content-Type: application/json' \
+        --data "{\"serialNumber\":\"$EXPIRATION_CONFIRMED_SERIAL_NUMBER\",\"customerId\":\"SMOKE-CUSTOMER\",\"orderId\":\"SMOKE-EXPIRATION\",\"startDate\":\"9999-12-30\",\"endDate\":\"9999-12-31\",\"status\":\"CONFIRMED\"}" \
+        "${RESERVATION_BASE_URL}/api/v1/reservations/${EXPIRATION_CONFIRMED_RESERVATION_ID}" >/dev/null
+}
+
+wait_for_reservation_status() {
+    local reservation_id="$1"
+    local expected_status="$2"
+    local attempt=1
+    local status
+
+    while ((attempt <= 45)); do
+        status="$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            --max-time 2 \
+            "${RESERVATION_BASE_URL}/api/v1/reservations/${reservation_id}" 2>/dev/null \
+            | jq -r '.status' || true)"
+        if [[ "$status" == "$expected_status" ]]; then
+            return
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+
+    fail "Reservation $reservation_id did not reach status $expected_status"
+}
+
+wait_for_inventory_status() {
+    local serial_number="$1"
+    local expected_status="$2"
+    local attempt=1
+    local status
+
+    while ((attempt <= 60)); do
+        status="$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            --max-time 2 \
+            "${INVENTORY_BASE_URL}/api/v1/inventory/${serial_number}" 2>/dev/null \
+            | jq -r '.status' || true)"
+        if [[ "$status" == "$expected_status" ]]; then
+            return
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+
+    fail "Inventory item $serial_number did not reach status $expected_status"
+}
+
+assert_expiration_outbox_counts() {
+    local postgres_user="${POSTGRES_USER:-rentflow_admin}"
+    local postgres_db="${POSTGRES_DB:-rentflow}"
+    local counts
+
+    counts="$(compose exec --no-TTY rentflow-postgres \
+        psql \
+        --username "$postgres_user" \
+        --dbname "$postgres_db" \
+        --tuples-only \
+        --no-align \
+        --command "SELECT record_key || ':' || count(*) FROM reservation.reservation_cancellation_outbox WHERE record_key IN ('$EXPIRATION_SERIAL_NUMBER', '$EXPIRATION_CONFIRMED_SERIAL_NUMBER') GROUP BY record_key ORDER BY record_key;")"
+    [[ "$counts" == "$EXPIRATION_SERIAL_NUMBER:1" ]] \
+        || fail "Timed expiration did not produce exactly one event while confirmed expiration produced none"
+}
+
+assert_expiration_flow() {
+    local history
+
+    create_expiration_item "$EXPIRATION_ITEM_AVAILABLE"
+    create_expiration_item "$EXPIRATION_CONFIRMED_ITEM_AVAILABLE"
+    EXPIRATION_RESERVATION_ID="$(create_expiration_reservation \
+        "$EXPIRATION_SERIAL_NUMBER" \
+        "31ee196f-503d-40c3-a717-7f552aca17d1")"
+    EXPIRATION_CONFIRMED_RESERVATION_ID="$(create_expiration_reservation \
+        "$EXPIRATION_CONFIRMED_SERIAL_NUMBER" \
+        "a70ea070-5c8d-407a-9dc8-7dc73062d147")"
+    wait_for_inventory_status "$EXPIRATION_SERIAL_NUMBER" "RESERVED"
+    wait_for_inventory_status "$EXPIRATION_CONFIRMED_SERIAL_NUMBER" "RESERVED"
+    confirm_expiration_reservation
+
+    wait_for_reservation_status "$EXPIRATION_RESERVATION_ID" "CANCELLED"
+    wait_for_inventory_status "$EXPIRATION_SERIAL_NUMBER" "AVAILABLE"
+    wait_for_cancellation_group
+    wait_for_reservation_status "$EXPIRATION_CONFIRMED_RESERVATION_ID" "CONFIRMED"
+    wait_for_inventory_status "$EXPIRATION_CONFIRMED_SERIAL_NUMBER" "RESERVED"
+    assert_expiration_outbox_counts
+
+    history="$(curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 5 \
+        "${INVENTORY_BASE_URL}/api/v1/inventory-history?page=0&size=100&serialNumber=${EXPIRATION_SERIAL_NUMBER}&sort=timestamp&direction=asc")"
+    [[ "$history" == *'"serialNumber":"SMOKE-EXPIRE-001","statusFrom":"RESERVED","statusTo":"AVAILABLE"'* ]] \
+        || fail "Timed expiration release history is not visible through the public API"
+}
+
 assert_kafka_smoke_event_readable() {
     local response
 
@@ -602,6 +750,9 @@ assert_cancellation_topics
 
 info "Verifying asynchronous reservation cancellation and durable duplicate suppression"
 assert_cancellation_flow
+
+info "Verifying automatic HELD expiration and CONFIRMED exclusion"
+assert_expiration_flow
 
 info "Creating and retrieving an inventory item and its pricing"
 create_item

@@ -102,6 +102,7 @@ services:
       INVENTORY_BASE_URL: http://inventory:8080
       KAFKA_BOOTSTRAP_SERVERS: rentflow-kafka:19092
       SPRING_PROFILES_ACTIVE: local
+      RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION: ${RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION:-10m}
     depends_on:
       inventory:
         condition: service_healthy
