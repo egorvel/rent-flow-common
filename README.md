@@ -51,6 +51,30 @@ For a non-interactive destructive reset:
 /home/yegor/Projects/RentFlow/rent-flow-common/scripts/local-postgres.sh help
 ```
 
+## Local Redis
+
+The Compose stack runs `redis:8.10.2-alpine` as Pricing's disposable cache. Redis is an optional
+accelerator rather than a source of truth: Pricing remains live and ready when Redis is unavailable
+and cached reads fall back to PostgreSQL.
+
+Start Redis and wait until it is healthy:
+
+```bash
+docker compose up --detach --wait rentflow-redis
+docker compose ps rentflow-redis
+```
+
+Follow its logs or stop it:
+
+```bash
+docker compose logs --follow rentflow-redis
+docker compose stop rentflow-redis
+```
+
+Redis is available to host processes at `localhost:${REDIS_PORT:-6379}` and to containers in this
+Compose project at `rentflow-redis:6379`. Set `REDIS_PORT` to change only the loopback-bound host
+port. The local instance is unauthenticated and has no persistence volume, so it is appropriate for
+development but not as a production topology.
 
 ## Local Kafka
 
@@ -137,4 +161,6 @@ duration to the service's production-like `10m`, while the combined smoke script
 Run `./scripts/container-smoke-test.sh` to build all three services and verify the complete public
 API → Reservation outbox → Kafka → Inventory path, including duplicate suppression and persistence
 across restarts. It also verifies timed cancellation releases Inventory and that an elapsed
-`CONFIRMED` reservation remains reserved.
+`CONFIRMED` reservation remains reserved. The smoke test also exercises Pricing's Redis-backed
+cached retrieval, verifies that a cache entry is populated, and confirms cached reads fail open to
+PostgreSQL while Redis is unavailable.

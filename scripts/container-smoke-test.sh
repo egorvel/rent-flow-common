@@ -10,6 +10,7 @@ readonly INVENTORY_BASE_URL="http://localhost:${INVENTORY_PORT}"
 readonly PRICING_BASE_URL="http://localhost:${PRICING_PORT}"
 readonly RESERVATION_BASE_URL="http://localhost:${RESERVATION_PORT}"
 readonly SERIAL_NUMBER="SMOKE-001"
+readonly PRICING_CACHE_KEY="rentflow:pricing:v1:pricingBySerial::${SERIAL_NUMBER}"
 readonly KAFKA_SMOKE_TOPIC="rentflow.smoke.events.v1"
 readonly KAFKA_SMOKE_MESSAGE='{"eventId":"SMOKE-001","eventType":"smoke-test"}'
 readonly CANCELLATION_SERIAL_NUMBER="SMOKE-CANCEL-001"
@@ -119,6 +120,27 @@ assert_http_status() {
         "$url" 2>/dev/null || true)"
     [[ "$actual_status" == "$expected_status" ]] \
         || fail "$url returned HTTP $actual_status instead of $expected_status"
+}
+
+assert_redis_ping() {
+    local response
+
+    response="$(compose exec --no-TTY rentflow-redis redis-cli --raw PING)"
+    [[ "$response" == "PONG" ]] || fail "Redis did not respond to PING"
+}
+
+assert_pricing_cache_entry() {
+    local exists
+    local ttl
+
+    exists="$(compose exec --no-TTY rentflow-redis \
+        redis-cli --raw EXISTS "$PRICING_CACHE_KEY")"
+    [[ "$exists" == "1" ]] || fail "Pricing did not populate its Redis cache entry"
+
+    ttl="$(compose exec --no-TTY rentflow-redis \
+        redis-cli --raw TTL "$PRICING_CACHE_KEY")"
+    [[ "$ttl" =~ ^[0-9]+$ ]] && ((ttl > 0)) \
+        || fail "Pricing cache entry does not have a positive TTL"
 }
 
 assert_bootstrap_state() {
@@ -706,6 +728,19 @@ assert_pricing_readable() {
         || fail "Persisted pricing could not be retrieved"
 }
 
+assert_pricing_cached() {
+    local response
+
+    response="$(curl \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 5 \
+        "${PRICING_BASE_URL}/api/v1/pricing/${SERIAL_NUMBER}/cached")"
+    [[ "$response" == "$EXPECTED_PRICING" ]] \
+        || fail "Cached pricing did not match the persisted pricing"
+}
+
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -738,6 +773,11 @@ compose restart rentflow-kafka
 wait_for_service_health rentflow-kafka 90
 assert_kafka_smoke_event_readable
 
+info "Starting Redis and verifying connectivity"
+compose up --detach rentflow-redis
+wait_for_service_health rentflow-redis 30
+assert_redis_ping
+
 info "Starting Inventory, Pricing, and Reservation"
 compose up --detach inventory pricing reservation
 wait_for_service_health inventory 120
@@ -759,6 +799,8 @@ create_item
 assert_item_readable
 create_pricing
 assert_pricing_readable
+assert_pricing_cached
+assert_pricing_cache_entry
 
 info "Restarting all services and checking database-backed persistence"
 compose restart inventory pricing reservation
@@ -791,16 +833,31 @@ assert_item_readable
 assert_pricing_readable
 assert_cancellation_reservation_readable
 
+info "Stopping Redis and checking Pricing's fail-open cached retrieval"
+compose stop rentflow-redis
+assert_http_status 200 "${PRICING_BASE_URL}/livez"
+assert_http_status 200 "${PRICING_BASE_URL}/readyz"
+assert_pricing_cached
+
+info "Restarting Redis and checking cache recovery"
+compose start rentflow-redis
+wait_for_service_health rentflow-redis 30
+assert_pricing_cached
+assert_pricing_cache_entry
+
 info "Recreating the combined stack without deleting its volume"
 compose down --remove-orphans
 compose up --detach
 wait_for_service_health rentflow-postgres 60
+wait_for_service_health rentflow-redis 30
 wait_for_service_health rentflow-kafka 90
 wait_for_service_health inventory 120
 wait_for_service_health pricing 120
 wait_for_service_health reservation 120
 assert_item_readable
 assert_pricing_readable
+assert_pricing_cached
+assert_pricing_cache_entry
 assert_cancellation_reservation_readable
 assert_kafka_smoke_event_readable
 
