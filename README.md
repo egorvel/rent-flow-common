@@ -185,6 +185,11 @@ Explore has provisioned Prometheus, Loki, and Tempo datasources. Grafana's Alert
 rules; external notification delivery is not configured. Dashboards and rules come from
 `observability/grafana/`; UI dashboard edits are disabled so changes stay in version control.
 
+For a ten-minute guided workload with cache reads, reservation replays, cancellations, expiration,
+and optional Redis/Inventory outages, see [the observability demo guide](OBSERVABILITY_DEMO.md).
+Run `python3 scripts/observability-demo.py --start --with-faults` to start it; omit `--with-faults`
+to generate traffic without stopping services.
+
 The metrics pipeline scrapes every 15 seconds with a five-second timeout. Inventory, Pricing and
 Reservation expose health and Prometheus on internal management ports `8085`, `8086` and `8087`,
 respectively. Common binds those listeners inside Docker without publishing them. Application probes
