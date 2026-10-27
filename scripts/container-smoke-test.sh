@@ -29,11 +29,18 @@ readonly EXPECTED_ITEM='{"serialNumber":"SMOKE-001","type":"Industrial drill","n
 readonly CREATE_ITEM_REQUEST='{"serialNumber":"SMOKE-001","type":"Industrial drill","name":"Smoke drill","status":"AVAILABLE"}'
 readonly EXPECTED_PRICING='{"serialNumber":"SMOKE-001","price":125.50,"weekendRate":1.2500,"longRentalCondition":7,"longRentalDiscount":0.1000,"deposit":300.00}'
 readonly CREATE_PRICING_REQUEST='{"serialNumber":"SMOKE-001","price":125.50,"weekendRate":1.2500,"longRentalCondition":7,"longRentalDiscount":0.1000,"deposit":300.00}'
+readonly PRICING_CREATION_TRACE_ID="d44b7f0bc3f448d78f6afde7f4b13401"
+readonly RESERVATION_CREATION_TRACE_ID="7dcfc683d9344929a91b3451aed49402"
 CANCELLATION_RESERVATION_ID=""
 EXPIRATION_RESERVATION_ID=""
 EXPIRATION_CONFIRMED_RESERVATION_ID=""
 
 export RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION="15s"
+export COMPOSE_PROJECT_NAME="$PROJECT_NAME"
+export COMPOSE_PROFILES="observability"
+export TRACING_EXPORT_ENABLED="true"
+export TRACING_SAMPLING_PROBABILITY="1.0"
+export INVENTORY_PORT PRICING_PORT RESERVATION_PORT
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -46,6 +53,11 @@ compose() {
 
 cleanup() {
     compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+}
+
+diagnose_failure() {
+    compose ps >&2 || true
+    compose logs --tail 60 rentflow-alloy rentflow-prometheus rentflow-loki rentflow-tempo rentflow-grafana >&2 || true
 }
 
 fail() {
@@ -280,6 +292,7 @@ create_cancellation_reservation() {
         --request POST \
         --header 'Content-Type: application/json' \
         --header "Idempotency-Key: $CANCELLATION_CREATION_KEY" \
+        --header "traceparent: 00-${RESERVATION_CREATION_TRACE_ID}-0123456789abcdef-01" \
         --data "$CANCELLATION_CREATION_REQUEST" \
         "${RESERVATION_BASE_URL}/api/v1/reservations")"
     [[ "$response" == *'"serialNumber":"SMOKE-CANCEL-001"'* && "$response" == *'"status":"HELD"'* ]] \
@@ -398,10 +411,25 @@ assert_cancellation_flow() {
     local history_before_duplicate
     local history_after_duplicate
 
+    # Commit a traced outbox row with publication paused, then recreate the JVM.
+    # Delivery after re-enabling the relay must retain the durable origin link.
+    export RESERVATION_CANCELLATION_RELAY_ENABLED=false
+    compose up --detach --no-deps reservation
+    wait_for_service_health reservation 120
     create_cancellation_item
     create_cancellation_reservation
     wait_for_cancellation_item "$CANCELLATION_ITEM_RESERVED"
     cancel_reservation
+    assert_cancellation_outbox_count
+    local durable_context_count
+    durable_context_count="$(compose exec --no-TTY rentflow-postgres \
+        psql --username "${POSTGRES_USER:-rentflow_admin}" --dbname "${POSTGRES_DB:-rentflow}" \
+        --tuples-only --no-align --command \
+        "SELECT count(*) FROM reservation.reservation_cancellation_outbox WHERE record_key = '$CANCELLATION_SERIAL_NUMBER' AND published_at IS NULL AND length(traceparent) = 55;")"
+    [[ "$durable_context_count" == "1" ]] || fail "Pending cancellation did not retain its origin context"
+    export RESERVATION_CANCELLATION_RELAY_ENABLED=true
+    compose up --detach --no-deps reservation
+    wait_for_service_health reservation 120
     wait_for_cancellation_item "$CANCELLATION_ITEM_AVAILABLE"
     wait_for_cancellation_group
     assert_cancellation_outbox_count
@@ -709,6 +737,7 @@ create_pricing() {
         --max-time 5 \
         --request POST \
         --header 'Content-Type: application/json' \
+        --header "traceparent: 00-${PRICING_CREATION_TRACE_ID}-0123456789abcdef-01" \
         --data "$CREATE_PRICING_REQUEST" \
         "${PRICING_BASE_URL}/api/v1/pricing")"
     [[ "$response" == "$EXPECTED_PRICING" ]] \
@@ -744,10 +773,12 @@ assert_pricing_cached() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap diagnose_failure ERR
 
 command -v docker >/dev/null 2>&1 || fail "docker is required"
 docker compose version >/dev/null 2>&1 || fail "Docker Compose is required"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
 
 cleanup
 
@@ -778,6 +809,11 @@ compose up --detach rentflow-redis
 wait_for_service_health rentflow-redis 30
 assert_redis_ping
 
+info "Starting the shared observability collectors, stores, and exporters"
+compose up --detach rentflow-prometheus rentflow-loki rentflow-tempo rentflow-alloy \
+    rentflow-grafana rentflow-postgres-exporter rentflow-redis-exporter rentflow-kafka-exporter
+python3 scripts/observability-smoke-test.py --ready-only
+
 info "Starting Inventory, Pricing, and Reservation"
 compose up --detach inventory pricing reservation
 wait_for_service_health inventory 120
@@ -801,6 +837,20 @@ create_pricing
 assert_pricing_readable
 assert_pricing_cached
 assert_pricing_cache_entry
+
+info "Verifying collected metrics, ECS logs, traces, exemplars, dashboards, and alerts"
+python3 scripts/observability-smoke-test.py --cancellation-serial "$CANCELLATION_SERIAL_NUMBER" \
+    --pricing-creation-trace "$PRICING_CREATION_TRACE_ID" \
+    --reservation-creation-trace "$RESERVATION_CREATION_TRACE_ID"
+
+info "Stopping telemetry and checking application readiness and business operations"
+compose stop rentflow-alloy rentflow-prometheus rentflow-loki rentflow-tempo rentflow-grafana
+assert_http_status 200 "${INVENTORY_BASE_URL}/readyz"
+assert_http_status 200 "${PRICING_BASE_URL}/readyz"
+assert_http_status 200 "${RESERVATION_BASE_URL}/readyz"
+assert_item_readable
+assert_pricing_readable
+assert_cancellation_reservation_readable
 
 info "Restarting all services and checking database-backed persistence"
 compose restart inventory pricing reservation
@@ -834,10 +884,13 @@ assert_pricing_readable
 assert_cancellation_reservation_readable
 
 info "Stopping Redis and checking Pricing's fail-open cached retrieval"
+# Restore collectors so the fallback event is observed as it happens.
+compose start rentflow-alloy rentflow-prometheus rentflow-loki rentflow-tempo rentflow-grafana
 compose stop rentflow-redis
 assert_http_status 200 "${PRICING_BASE_URL}/livez"
 assert_http_status 200 "${PRICING_BASE_URL}/readyz"
 assert_pricing_cached
+python3 scripts/observability-smoke-test.py --redis-fallback-only
 
 info "Restarting Redis and checking cache recovery"
 compose start rentflow-redis
@@ -860,5 +913,10 @@ assert_pricing_cached
 assert_pricing_cache_entry
 assert_cancellation_reservation_readable
 assert_kafka_smoke_event_readable
+
+info "Verifying observability after container recreation with retained storage"
+python3 scripts/observability-smoke-test.py --cancellation-serial "$CANCELLATION_SERIAL_NUMBER" \
+    --pricing-creation-trace "$PRICING_CREATION_TRACE_ID" \
+    --reservation-creation-trace "$RESERVATION_CREATION_TRACE_ID"
 
 info "Combined container smoke verification passed"

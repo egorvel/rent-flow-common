@@ -1,0 +1,42 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 5s
+
+scrape_configs:
+  - job_name: inventory
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [inventory:8085]
+    # Application owns service/environment; Prometheus owns instance/job.
+
+  - job_name: pricing
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [pricing:8086]
+  - job_name: reservation
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [reservation:8087]
+
+  - job_name: postgres
+    static_configs:
+      - targets: [rentflow-postgres-exporter:9187]
+  - job_name: redis
+    static_configs:
+      - targets: [rentflow-redis-exporter:9121]
+  - job_name: kafka
+    static_configs:
+      - targets: [rentflow-kafka-exporter:9308]
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+  - job_name: alloy
+    static_configs:
+      - targets: [rentflow-alloy:12345]
+  - job_name: loki
+    static_configs:
+      - targets: [rentflow-loki:3100]
+  - job_name: tempo
+    static_configs:
+      - targets: [rentflow-tempo:3200]

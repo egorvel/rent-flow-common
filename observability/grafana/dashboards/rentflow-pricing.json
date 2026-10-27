@@ -1,0 +1,772 @@
+{
+  "uid": "rentflow-pricing",
+  "title": "Pricing service",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "rentflow",
+    "observability"
+  ],
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "rentflow-prometheus"
+        },
+        "query": "label_values(process_uptime_seconds{service=\"rent-flow-pricing\"}, environment)",
+        "refresh": 1,
+        "current": {
+          "text": "local",
+          "value": "local"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP request rate",
+      "type": "timeseries",
+      "description": "Rate by route and response status.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (uri,status) (rate(http_server_requests_seconds_count{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "HTTP p95 latency",
+      "type": "timeseries",
+      "description": "Click an exemplar to investigate the matching trace.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le,uri) (rate(http_server_requests_seconds_bucket{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m])))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "HTTP 5xx rate",
+      "type": "timeseries",
+      "description": "Observe a representative baseline before selecting latency/error thresholds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (uri) (rate(http_server_requests_seconds_count{service=\"rent-flow-pricing\",environment=\"$environment\",status=~\"5..\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "JVM heap",
+      "type": "timeseries",
+      "description": "Per instance heap usage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (jvm_memory_used_bytes{service=\"rent-flow-pricing\",environment=\"$environment\",area=\"heap\"})",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Hikari active/pending connections",
+      "type": "timeseries",
+      "description": "Inspect pending acquisition alongside query spans.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{__name__=~\"hikaricp_connections_(active|pending)\",service=\"rent-flow-pricing\",environment=\"$environment\"}",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Hikari acquisition mean",
+      "type": "timeseries",
+      "description": "Average acquisition duration per pool and instance.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(hikaricp_connections_acquire_seconds_sum{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]) / rate(hikaricp_connections_acquire_seconds_count{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m])",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "title": "Single cache hits and misses",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Single-cache statistics exclude batch MGET.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(cache_gets_total{service=\"rent-flow-pricing\",environment=\"$environment\",cache=\"pricingBySerial\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      }
+    },
+    {
+      "title": "Batch entries",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Distinct requested batch entries; inspect separately from single-cache statistics.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(pricing_cache_batch_entries_total{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 8,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      }
+    },
+    {
+      "title": "Database loads",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Logical load attempts, including failures. Mixed batches can contain several entry reasons.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (mode,reason) (rate(pricing_cache_database_loads_total{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      }
+    },
+    {
+      "title": "Database entries",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Entries requested from PostgreSQL. read_error/decode_error distinguish degradation from ordinary misses.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (mode,reason) (rate(pricing_cache_database_entries_total{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      }
+    },
+    {
+      "title": "Cache provider errors",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Every error is counted even when WARNs are suppressed. Eviction errors can leave TTL-bounded stale data.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation) (rate(pricing_cache_errors_total{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      }
+    },
+    {
+      "title": "Batch cache errors",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "These overlap generic cache errors; do not sum them into a unique failure count.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation) (rate(pricing_cache_batch_errors_total{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      }
+    },
+    {
+      "title": "Batch size mean",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Distinct entries per batch invocation.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(pricing_cache_batch_size_sum{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]) / rate(pricing_cache_batch_size_count{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m])",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      }
+    },
+    {
+      "title": "Cache lookup p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Full cached invocation duration, including fallback and cache population.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le,mode,outcome) (rate(pricing_cache_lookup_seconds_bucket{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m])))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      }
+    },
+    {
+      "title": "Logical Inventory lookup outcomes",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "One logical result including retries; short_circuited has no physical HTTP attempt.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(pricing_inventory_lookup_seconds_count{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 15,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      }
+    },
+    {
+      "title": "Logical Inventory lookup p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Includes retry waiting and circuit evaluation.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le,outcome) (rate(pricing_inventory_lookup_seconds_bucket{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m])))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 16,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      }
+    },
+    {
+      "title": "Physical Inventory HTTP attempts",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Physical attempts; compare with logical lookups without adding their counts.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status) (rate(http_client_requests_seconds_count{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      }
+    },
+    {
+      "title": "Physical Inventory HTTP p95",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "HTTP latency excludes logical retry waiting.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_client_requests_seconds_bucket{service=\"rent-flow-pricing\",environment=\"$environment\"}[5m])))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      }
+    },
+    {
+      "title": "Inventory circuit state",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "An open circuit remains observable during quiet traffic.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "resilience4j_circuitbreaker_state{service=\"rent-flow-pricing\",environment=\"$environment\",name=\"inventory\"}",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 19,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      }
+    },
+    {
+      "title": "Inventory retries",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "description": "Logical retry-sequence results, not physical HTTP call counts.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (kind) (rate(resilience4j_retry_calls_total{service=\"rent-flow-pricing\",environment=\"$environment\",name=\"inventory\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "id": 20,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 72
+      }
+    }
+  ]
+}

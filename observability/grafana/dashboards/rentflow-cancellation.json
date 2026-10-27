@@ -1,0 +1,362 @@
+{
+  "uid": "rentflow-cancellation",
+  "title": "Cancellation workflow",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "rentflow",
+    "observability"
+  ],
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "rentflow-prometheus"
+        },
+        "query": "label_values(process_uptime_seconds{service=\"rent-flow-inventory\"}, environment)",
+        "refresh": 1,
+        "current": {
+          "text": "local",
+          "value": "local"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Inventory cancellation outcomes",
+      "type": "timeseries",
+      "description": "Received includes retries; released/already_available/duplicate count committed outcomes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(inventory_reservation_cancellation_records_total{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Completion delay p95",
+      "type": "timeseries",
+      "description": "Event occurredAt to committed Inventory release; excludes duplicates and future timestamps.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(inventory_reservation_cancellation_completion_delay_seconds_bucket{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m])))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Scheduled retries",
+      "type": "timeseries",
+      "description": "Scheduled retry decisions, not listener invocations.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(inventory_reservation_cancellation_records_total{service=\"rent-flow-inventory\",environment=\"$environment\",outcome=\"retry\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "DLT and failed DLT publication",
+      "type": "timeseries",
+      "description": "Failed DLT sends retain the source offset. Any increase alerts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (increase(inventory_reservation_cancellation_records_total{service=\"rent-flow-inventory\",environment=\"$environment\",outcome=~\"dead_letter|dead_letter_publish_failure\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Cancellation consumer lag",
+      "type": "timeseries",
+      "description": "Compare delay with backlog; low lag does not establish Reservation outbox health.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (consumergroup, topic) (clamp_min(kafka_consumergroup_lag{consumergroup=\"rentflow.inventory.reservation-cancellation.v1\"}, 0))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Future event timestamps",
+      "type": "timeseries",
+      "description": "Clock skew detected on successful nonduplicate records.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(inventory_reservation_cancellation_clock_skew_total{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Pending publication (fresh replicas)",
+      "type": "timeseries",
+      "description": "Maximum of fresh Reservation replicas; no fresh measurement means unknown, not healthy. See Reservation service for worker progress.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (service,environment) (reservation_cancellation_outbox_pending{service=\"rent-flow-reservation\",environment=\"$environment\"} and on(service,environment,instance) ((reservation_observability_backlog_last_success_timestamp{service=\"rent-flow-reservation\",environment=\"$environment\",backlog=\"outbox\"} > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service=\"rent-flow-reservation\",environment=\"$environment\",backlog=\"outbox\"} <= 45)))",
+          "legendFormat": "__auto"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Oldest pending publication (fresh replicas)",
+      "type": "timeseries",
+      "description": "Maximum of fresh Reservation replicas; no fresh measurement means unknown, not healthy. See Reservation service for worker progress.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (service,environment) (reservation_cancellation_outbox_oldest_age{service=\"rent-flow-reservation\",environment=\"$environment\"} and on(service,environment,instance) ((reservation_observability_backlog_last_success_timestamp{service=\"rent-flow-reservation\",environment=\"$environment\",backlog=\"outbox\"} > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service=\"rent-flow-reservation\",environment=\"$environment\",backlog=\"outbox\"} <= 45)))",
+          "legendFormat": "__auto"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Oldest overdue hold (fresh replicas)",
+      "type": "timeseries",
+      "description": "Maximum of fresh Reservation replicas; no fresh measurement means unknown, not healthy. See Reservation service for worker progress.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (service,environment) (reservation_cancellation_expiration_oldest_age{service=\"rent-flow-reservation\",environment=\"$environment\"} and on(service,environment,instance) ((reservation_observability_backlog_last_success_timestamp{service=\"rent-flow-reservation\",environment=\"$environment\",backlog=\"expiration\"} > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service=\"rent-flow-reservation\",environment=\"$environment\",backlog=\"expiration\"} <= 45)))",
+          "legendFormat": "__auto"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown / no fresh replica"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

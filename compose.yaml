@@ -11,6 +11,7 @@ services:
       PRICING_DB_PASSWORD: ${PRICING_DB_PASSWORD:-pricing-local}
       RESERVATION_DB_USER: ${RESERVATION_DB_USER:-reservation}
       RESERVATION_DB_PASSWORD: ${RESERVATION_DB_PASSWORD:-reservation-local}
+      POSTGRES_EXPORTER_PASSWORD: ${POSTGRES_EXPORTER_PASSWORD:-monitoring-local}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -18,6 +19,7 @@ services:
       - ../rent-flow-inventory/docker/postgres/init-inventory.sh:/docker-entrypoint-initdb.d/10-init-inventory.sh:ro
       - ../rent-flow-pricing/docker/postgres/init-pricing.sh:/docker-entrypoint-initdb.d/20-init-pricing.sh:ro
       - ../rent-flow-reservation/docker/postgres/init-reservation.sh:/docker-entrypoint-initdb.d/30-init-reservation.sh:ro
+      - ./observability/postgres/init-monitoring.sh:/docker-entrypoint-initdb.d/40-init-monitoring.sh:ro
     healthcheck:
       test: pg_isready --username "$${POSTGRES_USER}" --dbname "$${POSTGRES_DB}"
       interval: 5s
@@ -72,11 +74,21 @@ services:
       context: ../rent-flow-inventory
       dockerfile: Dockerfile
     environment:
+      MANAGEMENT_SERVER_ADDRESS: 0.0.0.0
+      MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"
+      OBSERVABILITY_ENVIRONMENT: ${OBSERVABILITY_ENVIRONMENT:-local}
+      TRACING_EXPORT_ENABLED: ${TRACING_EXPORT_ENABLED:-false}
+      TRACING_OTLP_ENDPOINT: http://rentflow-alloy:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
       SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/${POSTGRES_DB:-rentflow}
       SPRING_DATASOURCE_USERNAME: ${INVENTORY_DB_USER:-inventory}
       SPRING_DATASOURCE_PASSWORD: ${INVENTORY_DB_PASSWORD:-inventory-local}
       KAFKA_BOOTSTRAP_SERVERS: rentflow-kafka:19092
       SPRING_PROFILES_ACTIVE: local
+    labels:
+      rentflow.observability.collect: "true"
+      rentflow.observability.service: rent-flow-inventory
+      rentflow.observability.environment: ${OBSERVABILITY_ENVIRONMENT:-local}
     depends_on:
       rentflow-kafka:
         condition: service_healthy
@@ -90,6 +102,11 @@ services:
       context: ../rent-flow-pricing
       dockerfile: Dockerfile
     environment:
+      MANAGEMENT_SERVER_ADDRESS: 0.0.0.0
+      OBSERVABILITY_ENVIRONMENT: ${OBSERVABILITY_ENVIRONMENT:-local}
+      TRACING_EXPORT_ENABLED: ${TRACING_EXPORT_ENABLED:-false}
+      TRACING_OTLP_ENDPOINT: http://rentflow-alloy:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
       SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/${POSTGRES_DB:-rentflow}
       SPRING_DATASOURCE_USERNAME: ${PRICING_DB_USER:-pricing}
       SPRING_DATASOURCE_PASSWORD: ${PRICING_DB_PASSWORD:-pricing-local}
@@ -106,12 +123,21 @@ services:
         condition: service_healthy
     ports:
       - "${PRICING_PORT:-8081}:8080"
+    labels:
+      rentflow.observability.collect: "true"
+      rentflow.observability.service: rent-flow-pricing
+      rentflow.observability.environment: ${OBSERVABILITY_ENVIRONMENT:-local}
 
   reservation:
     build:
       context: ../rent-flow-reservation
       dockerfile: Dockerfile
     environment:
+      MANAGEMENT_SERVER_ADDRESS: 0.0.0.0
+      OBSERVABILITY_ENVIRONMENT: ${OBSERVABILITY_ENVIRONMENT:-local}
+      TRACING_EXPORT_ENABLED: ${TRACING_EXPORT_ENABLED:-false}
+      TRACING_OTLP_ENDPOINT: http://rentflow-alloy:4318/v1/traces
+      TRACING_SAMPLING_PROBABILITY: ${TRACING_SAMPLING_PROBABILITY:-1.0}
       SPRING_DATASOURCE_URL: jdbc:postgresql://rentflow-postgres:5432/rentflow
       SPRING_DATASOURCE_USERNAME: ${RESERVATION_DB_USER:-reservation}
       SPRING_DATASOURCE_PASSWORD: ${RESERVATION_DB_PASSWORD:-reservation-local}
@@ -119,6 +145,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: rentflow-kafka:19092
       SPRING_PROFILES_ACTIVE: local
       RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION: ${RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION:-10m}
+      RESERVATION_CANCELLATION_RELAY_ENABLED: ${RESERVATION_CANCELLATION_RELAY_ENABLED:-true}
     depends_on:
       inventory:
         condition: service_healthy
@@ -128,7 +155,105 @@ services:
         condition: service_healthy
     ports:
       - "${RESERVATION_PORT:-8082}:8080"
+    labels:
+      rentflow.observability.collect: "true"
+      rentflow.observability.service: rent-flow-reservation
+      rentflow.observability.environment: ${OBSERVABILITY_ENVIRONMENT:-local}
+
+  rentflow-prometheus:
+    image: prom/prometheus:v3.15.0
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=2GB
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./observability/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - rentflow-prometheus-data:/prometheus
+
+  rentflow-loki:
+    image: grafana/loki:3.7.8
+    profiles: [observability]
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - rentflow-loki-data:/loki
+
+  rentflow-tempo:
+    # Keep the monolithic Tempo 2 topology; Tempo 3 requires a different deployment.
+    image: grafana/tempo:2.10.8
+    profiles: [observability]
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./observability/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - rentflow-tempo-data:/var/tempo
+
+  rentflow-alloy:
+    image: grafana/alloy:v1.20.1
+    profiles: [observability]
+    environment:
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-rent-flow-common}
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "127.0.0.1:${OTLP_HTTP_PORT:-4318}:4318"
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - rentflow-alloy-data:/var/lib/alloy/data
+
+  rentflow-grafana:
+    image: grafana/grafana:13.2.3
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-rentflow-local}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - rentflow-grafana-data:/var/lib/grafana
+
+  rentflow-postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    profiles: [observability]
+    environment:
+      DATA_SOURCE_URI: rentflow-postgres:5432/${POSTGRES_DB:-rentflow}?sslmode=disable
+      DATA_SOURCE_USER: rentflow_monitor
+      DATA_SOURCE_PASS: ${POSTGRES_EXPORTER_PASSWORD:-monitoring-local}
+
+  rentflow-redis-exporter:
+    image: oliver006/redis_exporter:v1.93.0
+    profiles: [observability]
+    command: ["--redis.addr=redis://rentflow-redis:6379"]
+
+  rentflow-kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.10.0
+    profiles: [observability]
+    command:
+      - --kafka.server=rentflow-kafka:19092
+      - --kafka.version=4.3.1
+      - --topic.filter=rentflow\..*
+      - --group.filter=rentflow\..*
+    restart: on-failure
 
 volumes:
   rentflow-postgres-data:
   rentflow-kafka-data:
+  rentflow-prometheus-data:
+  rentflow-loki-data:
+  rentflow-tempo-data:
+  rentflow-alloy-data:
+  rentflow-grafana-data:

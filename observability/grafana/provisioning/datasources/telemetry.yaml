@@ -1,0 +1,52 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: rentflow-prometheus
+    type: prometheus
+    access: proxy
+    url: http://rentflow-prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: rentflow-tempo
+  - name: Loki
+    uid: rentflow-loki
+    type: loki
+    access: proxy
+    url: http://rentflow-loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - name: traceId
+          matcherRegex: '"traceId"\s*:\s*"([a-fA-F0-9]{32})"'
+          datasourceUid: rentflow-tempo
+          url: '$${__value.raw}'
+          urlDisplayLabel: View trace
+        - name: originTraceId
+          matcherRegex: '"originTraceId"\s*:\s*"([a-fA-F0-9]{32})"'
+          datasourceUid: rentflow-tempo
+          url: '$${__value.raw}'
+          urlDisplayLabel: View cancellation origin
+  - name: Tempo
+    uid: rentflow-tempo
+    type: tempo
+    access: proxy
+    url: http://rentflow-tempo:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: rentflow-loki
+        tags:
+          - key: service.name
+            value: service
+          - key: deployment.environment.name
+            value: environment
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        filterByTraceID: false
+        filterBySpanID: false
+        customQuery: true
+        query: '{$${__tags}} | json | traceId="$${__trace.traceId}"'

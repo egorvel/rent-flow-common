@@ -1,0 +1,542 @@
+{
+  "uid": "rentflow-inventory",
+  "title": "Inventory service",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "tags": [
+    "rentflow",
+    "observability"
+  ],
+  "timezone": "browser",
+  "refresh": "15s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "rentflow-prometheus"
+        },
+        "query": "label_values(process_uptime_seconds{service=\"rent-flow-inventory\"}, environment)",
+        "refresh": 1,
+        "current": {
+          "text": "local",
+          "value": "local"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "HTTP request rate",
+      "type": "timeseries",
+      "description": "Rate by route and response status.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (uri,status) (rate(http_server_requests_seconds_count{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "HTTP p95 latency",
+      "type": "timeseries",
+      "description": "Click an exemplar to investigate the matching trace.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le,uri) (rate(http_server_requests_seconds_bucket{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m])))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "HTTP 5xx rate",
+      "type": "timeseries",
+      "description": "Observe a representative baseline before selecting latency/error thresholds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (uri) (rate(http_server_requests_seconds_count{service=\"rent-flow-inventory\",environment=\"$environment\",status=~\"5..\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "JVM heap",
+      "type": "timeseries",
+      "description": "Per instance heap usage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (instance) (jvm_memory_used_bytes{service=\"rent-flow-inventory\",environment=\"$environment\",area=\"heap\"})",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Hikari active/pending connections",
+      "type": "timeseries",
+      "description": "Inspect pending acquisition alongside query spans.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{__name__=~\"hikaricp_connections_(active|pending)\",service=\"rent-flow-inventory\",environment=\"$environment\"}",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Hikari acquisition mean",
+      "type": "timeseries",
+      "description": "Average acquisition duration per pool and instance.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(hikaricp_connections_acquire_seconds_sum{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]) / rate(hikaricp_connections_acquire_seconds_count{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m])",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "Idempotency outcomes",
+      "type": "timeseries",
+      "description": "Attempts include later transaction rollbacks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(inventory_idempotency_requests_total{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Expired cleanup backlog",
+      "type": "timeseries",
+      "description": "Database-wide count: use max, never sum across instances. Check measurement age first.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(inventory_idempotency_cleanup_expired_backlog{service=\"rent-flow-inventory\",environment=\"$environment\"})",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "Backlog measurement age",
+      "type": "timeseries",
+      "description": "Zero timestamp means unknown; alert grants a startup grace.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - inventory_idempotency_cleanup_backlog_last_success_timestamp{service=\"rent-flow-inventory\",environment=\"$environment\"}",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Cleanup run/success timestamps",
+      "type": "timeseries",
+      "description": "Timestamps are converted to milliseconds for display; zero (not run/succeeded yet) is omitted. Daily worker runs at 03:00 UTC.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "label_replace({__name__=~\"inventory_idempotency_cleanup_last_(run|success)_timestamp\",service=\"rent-flow-inventory\",environment=\"$environment\"} > 0, \"timestamp_kind\", \"$1\", \"__name__\", \".*_last_(run|success)_timestamp\") * 1000",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "Cleanup worker failures",
+      "type": "timeseries",
+      "description": "Deletion worker failures, distinct from failed measurements.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(inventory_idempotency_cleanup_failures_total{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Backlog refresh failures",
+      "type": "timeseries",
+      "description": "Prior measurement remains available but grows stale.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(inventory_idempotency_cleanup_backlog_refresh_failures_total{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Deleted records",
+      "type": "timeseries",
+      "description": "Committed chunk deletions.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(inventory_idempotency_cleanup_deleted_total{service=\"rent-flow-inventory\",environment=\"$environment\"}[5m]))",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Cleanup mean duration",
+      "type": "timeseries",
+      "description": "Worker total run time.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "rentflow-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(inventory_idempotency_cleanup_duration_seconds_sum{service=\"rent-flow-inventory\",environment=\"$environment\"}[1d]) / rate(inventory_idempotency_cleanup_duration_seconds_count{service=\"rent-flow-inventory\",environment=\"$environment\"}[1d])",
+          "legendFormat": "__auto",
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

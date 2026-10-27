@@ -1,0 +1,69 @@
+discovery.docker "rentflow" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+  filter {
+    name = "label"
+    values = ["com.docker.compose.project=" + sys.env("COMPOSE_PROJECT_NAME"), "rentflow.observability.collect=true"]
+  }
+}
+
+discovery.relabel "logs" {
+  targets = discovery.docker.rentflow.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_rentflow_observability_service"]
+    target_label = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_rentflow_observability_environment"]
+    target_label = "environment"
+  }
+}
+
+loki.source.docker "rentflow" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.logs.output
+  forward_to = [loki.process.ecs.receiver]
+}
+
+loki.process "ecs" {
+  // Explicitly bound the stream labels; IDs and runtime instances stay in JSON.
+  stage.label_keep {
+    values = ["service", "environment"]
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://rentflow-loki:3100/loki/api/v1/push"
+  }
+}
+
+otelcol.receiver.otlp "applications" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.processor.batch.traces.input]
+  }
+}
+
+otelcol.processor.batch "traces" {
+  timeout = "1s"
+  send_batch_size = 512
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "rentflow-tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+  sending_queue {
+    queue_size = 1024
+  }
+}

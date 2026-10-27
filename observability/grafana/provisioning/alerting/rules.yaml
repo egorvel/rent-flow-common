@@ -1,0 +1,842 @@
+apiVersion: 1
+groups:
+- orgId: 1
+  name: RentFlow operations
+  folder: RentFlow
+  interval: 1m
+  rules:
+  - uid: inventory-scrape-missing
+    title: Inventory metrics unavailable
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource: &id001
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: (1 - up{job="inventory"}) or absent(up{job="inventory"})
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 2m
+    annotations:
+      summary: Inventory scrape has failed or disappeared for two minutes. Check the
+        internal management listener.
+      description: 'See README.md: Shared observability / Investigation and alerts.'
+    labels:
+      service: rent-flow-inventory
+      severity: warning
+    isPaused: false
+  - uid: inventory-dead-letter
+    title: Inventory cancellation reached DLT
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource: *id001
+        editorMode: code
+        expr: sum by (service,environment) ((increase(inventory_reservation_cancellation_records_total{outcome="dead_letter"}[5m])
+          > 0) or (inventory_reservation_cancellation_records_total{outcome="dead_letter"}
+          unless inventory_reservation_cancellation_records_total{outcome="dead_letter"}
+          offset 5m))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 0s
+    annotations:
+      summary: Investigate cancellation logs and follow traceId. Any increase in five
+        minutes requires review.
+      description: 'Newly appearing counters include their initial value, so the first
+        DLT event also alerts. See README.md: Investigation and alerts.'
+    labels:
+      service: rent-flow-inventory
+      severity: warning
+    isPaused: false
+  - uid: inventory-dead-letter-publish-failure
+    title: Inventory DLT publication failed
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource: *id001
+        editorMode: code
+        expr: sum by (service,environment) ((increase(inventory_reservation_cancellation_records_total{outcome="dead_letter_publish_failure"}[5m])
+          > 0) or (inventory_reservation_cancellation_records_total{outcome="dead_letter_publish_failure"}
+          unless inventory_reservation_cancellation_records_total{outcome="dead_letter_publish_failure"}
+          offset 5m))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 0s
+    annotations:
+      summary: Investigate cancellation logs and follow traceId. Any increase in five
+        minutes requires review.
+      description: 'Newly appearing counters include their initial value, so the first
+        DLT event also alerts. See README.md: Investigation and alerts.'
+    labels:
+      service: rent-flow-inventory
+      severity: warning
+    isPaused: false
+  - uid: inventory-backlog-stale
+    title: Inventory cleanup backlog measurement stale
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource: *id001
+        editorMode: code
+        expr: (time() - inventory_idempotency_cleanup_backlog_last_success_timestamp
+          > bool 180) and on(service,environment,instance) (process_uptime_seconds{service="rent-flow-inventory"}
+          > 180)
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 0s
+    annotations:
+      summary: The backlog measurement is older than 180 seconds, or still unknown
+        after startup grace.
+      description: 'See README.md: Shared observability / Investigation and alerts.'
+    labels:
+      service: rent-flow-inventory
+      severity: warning
+    isPaused: false
+  - uid: inventory-cleanup-overdue
+    title: Inventory cleanup has not succeeded for 26 hours
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource: *id001
+        editorMode: code
+        expr: ((time() - inventory_idempotency_cleanup_last_success_timestamp > bool
+          93600) and (inventory_idempotency_cleanup_last_success_timestamp > 0)) or
+          ((inventory_idempotency_cleanup_last_success_timestamp == bool 0) and on(service,environment,instance)
+          (process_uptime_seconds{service="rent-flow-inventory"} > 93600))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 0s
+    annotations:
+      summary: Check worker failures and last-run timestamps. First startup gets 26
+        hours when no success is recorded.
+      description: 'See README.md: Shared observability / Investigation and alerts.'
+    labels:
+      service: rent-flow-inventory
+      severity: warning
+    isPaused: false
+  - uid: infrastructure-unavailable
+    title: Shared infrastructure unavailable
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource: *id001
+        editorMode: code
+        expr: (1 - pg_up) or (1 - redis_up) or (kafka_brokers < bool 1) or (1 - up{job=~"postgres|redis|kafka"})
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 2m
+    annotations:
+      summary: Inspect exporter and backend health. Redis failures preserve Pricing
+        readiness.
+      description: 'See README.md: Shared observability / Investigation and alerts.'
+    labels:
+      service: shared-infrastructure
+      severity: warning
+    isPaused: false
+  - uid: pricing-scrape-missing
+    title: Pricing metrics unavailable
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: (1 - up{job="pricing"}) or absent(up{job="pricing"})
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 2m
+    annotations:
+      summary: Management scrape failed or disappeared for two minutes.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-pricing
+      severity: warning
+    isPaused: false
+  - uid: reservation-scrape-missing
+    title: Reservation metrics unavailable
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: (1 - up{job="reservation"}) or absent(up{job="reservation"})
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 2m
+    annotations:
+      summary: Management scrape failed or disappeared for two minutes.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-reservation
+      severity: warning
+    isPaused: false
+  - uid: pricing-http-errors
+    title: Pricing business HTTP errors
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: (sum by (service,environment) (rate(http_server_requests_seconds_count{service="rent-flow-pricing",uri=~"/api/v1/pricing.*",status=~"5.."}[5m]))
+          / sum by (service,environment) (rate(http_server_requests_seconds_count{service="rent-flow-pricing",uri=~"/api/v1/pricing.*"}[5m]))
+          > bool 0.05) and (sum by (service,environment) (increase(http_server_requests_seconds_count{service="rent-flow-pricing",uri=~"/api/v1/pricing.*"}[5m]))
+          >= 20)
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 5m
+    annotations:
+      summary: Business HTTP 5xx exceeds 5% with at least 20 matched requests in five
+        minutes.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-pricing
+      severity: warning
+    isPaused: false
+  - uid: pricing-http-slow
+    title: Pricing business HTTP latency
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: (histogram_quantile(0.95, sum by (service,environment,le) (rate(http_server_requests_seconds_bucket{service="rent-flow-pricing",uri=~"/api/v1/pricing.*"}[5m])))
+          > bool 2) and (sum by (service,environment) (increase(http_server_requests_seconds_count{service="rent-flow-pricing",uri=~"/api/v1/pricing.*"}[5m]))
+          >= 20)
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 5m
+    annotations:
+      summary: Business HTTP p95 exceeds two seconds with at least 20 matched requests
+        in five minutes.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-pricing
+      severity: warning
+    isPaused: false
+  - uid: pricing-database-fallback
+    title: Pricing cache degradation drives database work
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: sum by (service,environment) (rate(pricing_cache_database_entries_total{service="rent-flow-pricing",reason=~"read_error|decode_error"}[5m]))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 2m
+    annotations:
+      summary: Redis read/decode errors are causing PostgreSQL work. Ordinary misses
+        are excluded.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-pricing
+      severity: warning
+    isPaused: false
+  - uid: pricing-eviction-failed
+    title: Pricing cache invalidation failed
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: sum by (service,environment) ((increase(pricing_cache_errors_total{service="rent-flow-pricing",operation="evict"}[5m])
+          > 0) or (pricing_cache_errors_total{service="rent-flow-pricing",operation="evict"}
+          unless pricing_cache_errors_total{service="rent-flow-pricing",operation="evict"}
+          offset 5m))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 0s
+    annotations:
+      summary: An eviction error may leave TTL-bounded stale cached prices. Inspect
+        authoritative reads and correlated WARNs.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-pricing
+      severity: warning
+    isPaused: false
+  - uid: pricing-inventory-unavailable
+    title: Pricing Inventory lookups unavailable
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: sum by (service,environment) (rate(pricing_inventory_lookup_seconds_count{service="rent-flow-pricing",outcome=~"unavailable|short_circuited"}[5m]))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 2m
+    annotations:
+      summary: Inventory lookups are unavailable or short-circuited.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-pricing
+      severity: warning
+    isPaused: false
+  - uid: pricing-open-circuit
+    title: Pricing Inventory circuit remains open
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: max by (service,environment) (resilience4j_circuitbreaker_state{service="rent-flow-pricing",name="inventory",state=~"open|forced_open"})
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 2m
+    annotations:
+      summary: The Inventory circuit remains open, including during quiet traffic.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-pricing
+      severity: warning
+    isPaused: false
+  - uid: reservation-outbox-aged
+    title: Reservation cancellation publication delayed
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: max by (service,environment) (reservation_cancellation_outbox_oldest_age{service="rent-flow-reservation"}
+          and on(service,environment,instance) ((reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="outbox"}
+          > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="outbox"}
+          <= 45))) > bool 120
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 1m
+    annotations:
+      summary: Fresh oldest pending publication age exceeds 120s; inspect retries
+        and FIFO head backoff.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-reservation
+      severity: warning
+    isPaused: false
+  - uid: reservation-holds-overdue
+    title: Reservation holds are overdue
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: max by (service,environment) (reservation_cancellation_expiration_oldest_age{service="rent-flow-reservation"}
+          and on(service,environment,instance) ((reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="expiration"}
+          > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="expiration"}
+          <= 45))) > bool 30
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 30s
+    annotations:
+      summary: Fresh oldest overdue HELD delay exceeds 30s beyond its deadline.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-reservation
+      severity: warning
+    isPaused: false
+  - uid: reservation-operational-stale
+    title: Reservation operational backlog unknown or stale
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: (max by (service,environment) (process_uptime_seconds{service="rent-flow-reservation"}
+          > 45) unless on(service,environment) max by (service,environment) ((reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="outbox"}
+          > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="outbox"}
+          <= 45))) or (max by (service,environment) (process_uptime_seconds{service="rent-flow-reservation"}
+          > 45) unless on(service,environment) max by (service,environment) ((reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="expiration"}
+          > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="expiration"}
+          <= 45)))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 0s
+    annotations:
+      summary: No fresh replica for a required operational backlog after 45s startup
+        grace. Age-based health is unknown; worker flags do not suppress this alert.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-reservation
+      severity: warning
+    isPaused: false
+  - uid: reservation-cleanup-stale
+    title: Reservation cleanup backlog unknown or stale
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: (max by (service,environment) (process_uptime_seconds{service="rent-flow-reservation"}
+          > 180) unless on(service,environment) max by (service,environment) ((reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="creation_cleanup"}
+          > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="creation_cleanup"}
+          <= 180))) or (max by (service,environment) (process_uptime_seconds{service="rent-flow-reservation"}
+          > 180) unless on(service,environment) max by (service,environment) ((reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="outbox_cleanup"}
+          > 0) and (time() - reservation_observability_backlog_last_success_timestamp{service="rent-flow-reservation",backlog="outbox_cleanup"}
+          <= 180)))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 0s
+    annotations:
+      summary: No fresh replica for a required cleanup backlog after 180s startup
+        grace. Age-based health is unknown; worker flags do not suppress this alert.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-reservation
+      severity: warning
+    isPaused: false
+  - uid: reservation-worker-errors
+    title: Reservation worker failures continue
+    condition: C
+    data:
+    - refId: A
+      relativeTimeRange:
+        from: 600
+        to: 0
+      datasourceUid: rentflow-prometheus
+      model:
+        datasource:
+          type: prometheus
+          uid: rentflow-prometheus
+        editorMode: code
+        expr: sum by (service,environment,worker) (rate(reservation_worker_run_seconds_count{service="rent-flow-reservation",outcome="error"}[5m]))
+        instant: true
+        refId: A
+    - refId: C
+      relativeTimeRange:
+        from: 0
+        to: 0
+      datasourceUid: __expr__
+      model:
+        type: threshold
+        expression: A
+        refId: C
+        conditions:
+        - evaluator:
+            type: gt
+            params:
+            - 0
+    noDataState: OK
+    execErrState: Error
+    for: 5m
+    annotations:
+      summary: A business worker keeps failing. Check worker timestamps, backlog freshness
+        and exception diagnostics.
+      description: 'Initial operational threshold, not an SLO. See README.md: Investigation
+        and alerts.'
+    labels:
+      service: rent-flow-reservation
+      severity: warning
+    isPaused: false
