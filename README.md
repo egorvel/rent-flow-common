@@ -3,6 +3,66 @@
 This repository owns the local infrastructure topology shared by the Rent Flow services. Application-level
 Kafka behavior remains in the service that publishes or consumes an event.
 
+
+## Local Keycloak
+
+Keycloak `26.8.1` is pinned by digest and uses its own PostgreSQL container, database/login and volume.
+Application PostgreSQL resets preserve identity data. HTTP/development mode is for local use only.
+
+For browser access, add this line to your host's hosts file:
+
+```text
+127.0.0.1 auth.rentflow.test
+```
+
+From Common's root, initialize the private files and perform explicit first-time provisioning:
+
+```bash
+./scripts/local-keycloak.sh init
+./scripts/local-keycloak.sh bootstrap
+./scripts/local-keycloak.sh fixtures apply
+./scripts/local-keycloak.sh verify-browser
+```
+
+Fixtures are optional for normal use; `verify-browser` needs the two customers and staff fixture.
+Open the [RentFlow administration console](http://auth.rentflow.test:8180/admin/rentflow-local/console/)
+as `rentflow-operator`. Its generated password is in `.secrets/security/rentflow-operator-password`;
+open this private file locally without copying credentials into logs or Git. Fixture passwords and
+separate caller credentials are in the same ignored directory, with owner-only permissions.
+
+The issuer is `http://auth.rentflow.test:8180/realms/rentflow-local` for host and container clients.
+Optional non-secret port/realm settings are in `.env.security.example`; merge them into an existing
+`.env` rather than replacing it. Run `init`/`bootstrap` before the first unrestricted `docker compose up`.
+The wrapper reads Compose's `.env` settings. `SECURITY_STATE_DIR` selects a separate private state
+directory; initialized settings are locked to that project/realm/ports to avoid accidental retargeting.
+
+For routine use:
+
+```bash
+./scripts/local-keycloak.sh start
+./scripts/local-keycloak.sh status
+./scripts/local-keycloak.sh policy plan
+./scripts/local-keycloak.sh policy apply
+./scripts/local-keycloak.sh stop
+```
+
+`start` detects drift without applying it; `policy plan` returns exit code `2` when changes exist.
+`policy apply` updates owned settings to match the checked-in policy and reads them back.
+Role assignments, scope mappings, composites and defaults are declared in
+`security/keycloak/rentflow-realm.template.json`. Its `_rentflow` block declares the user-profile
+setting, local operator/optional fixtures and credential-file references; the renderer excludes
+that tooling block from Keycloak's startup import. Python applies these declarations generically.
+There are no migration files or policy versions. Run `verify` or `verify-browser` explicitly for token/login checks.
+Neither restart nor policy apply resets users, passwords, keys or client secrets. There is no reset command.
+For rotation, recovery and a claims/PKCE walkthrough, see [the security guide](SECURITY_WALKTHROUGH.md).
+
+Run only the isolated identity checks with `./scripts/security-smoke-test.sh`, or the full stack with
+`./scripts/container-smoke-test.sh`. Both provision their own `rentflow-smoke` realm, keys, temporary
+secret files and identity volume, and remove only their own test resources. Browser/JWT dependencies
+are pinned inside the test image. Smoke defaults to identity port `18180` and callback port `18765`;
+set `KEYCLOAK_SMOKE_PORT` and `KEYCLOAK_SMOKE_PKCE_PORT` to change them. Automated checks use their own
+hostname mapping and do not edit `/etc/hosts`. The browser runner currently supports Linux host networking.
+
 ## Local PostgreSQL startup
 
 ### Start PostgreSQL and wait until healthy

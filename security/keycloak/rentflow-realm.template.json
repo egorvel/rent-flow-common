@@ -1,0 +1,723 @@
+{
+  "realm": "${KEYCLOAK_REALM}",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 28800,
+  "defaultSignatureAlgorithm": "RS256",
+  "attributes": {
+    "rentflow.environment": "${KEYCLOAK_REALM}"
+  },
+  "roles": {
+    "realm": [
+      {
+        "name": "CUSTOMER",
+        "composite": false
+      },
+      {
+        "name": "STAFF",
+        "composite": false
+      }
+    ],
+    "client": {
+      "inventory-api": [
+        {
+          "name": "inventory:read",
+          "composite": false
+        },
+        {
+          "name": "inventory:reserve",
+          "composite": false
+        }
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "inventory-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": [],
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false"
+      }
+    },
+    {
+      "clientId": "pricing-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": [],
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false"
+      }
+    },
+    {
+      "clientId": "reservation-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": [],
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false"
+      }
+    },
+    {
+      "clientId": "pricing-service",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [
+        "pricing-inventory-access"
+      ],
+      "optionalClientScopes": [],
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false"
+      }
+    },
+    {
+      "clientId": "reservation-service",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [
+        "reservation-inventory-access"
+      ],
+      "optionalClientScopes": [],
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false"
+      }
+    },
+    {
+      "clientId": "inventory-swagger",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [
+        "inventory-access"
+      ],
+      "optionalClientScopes": [],
+      "redirectUris": [
+        "http://localhost:${INVENTORY_PORT}/swagger-ui/oauth2-redirect.html"
+      ],
+      "webOrigins": [
+        "http://localhost:${INVENTORY_PORT}"
+      ],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false",
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "pricing-swagger",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [
+        "pricing-access"
+      ],
+      "optionalClientScopes": [],
+      "redirectUris": [
+        "http://localhost:${PRICING_PORT}/swagger-ui/oauth2-redirect.html"
+      ],
+      "webOrigins": [
+        "http://localhost:${PRICING_PORT}"
+      ],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false",
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "reservation-swagger",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [
+        "reservation-access"
+      ],
+      "optionalClientScopes": [],
+      "redirectUris": [
+        "http://localhost:${RESERVATION_PORT}/swagger-ui/oauth2-redirect.html"
+      ],
+      "webOrigins": [
+        "http://localhost:${RESERVATION_PORT}"
+      ],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false",
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "rentflow-pkce-check",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [],
+      "optionalClientScopes": [
+        "inventory-access",
+        "pricing-access",
+        "reservation-access"
+      ],
+      "redirectUris": [
+        "http://127.0.0.1:${KEYCLOAK_PKCE_PORT}/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false",
+        "pkce.code.challenge.method": "S256"
+      }
+    },
+    {
+      "clientId": "rentflow-realm-maintainer",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "fullScopeAllowed": false,
+      "consentRequired": false,
+      "defaultClientScopes": [
+        "rentflow-maintenance"
+      ],
+      "optionalClientScopes": [],
+      "redirectUris": [],
+      "webOrigins": [],
+      "attributes": {
+        "access.token.signed.response.alg": "RS256",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false",
+        "client_credentials.use_refresh_token": "false"
+      }
+    }
+  ],
+  "clientScopes": [
+    {
+      "name": "inventory-access",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "inventory-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "inventory-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "inventory-api-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "inventory-api",
+            "claim.name": "resource_access.inventory-api.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "pricing-access",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "pricing-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "pricing-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "pricing-api-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "pricing-api",
+            "claim.name": "resource_access.pricing-api.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reservation-access",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "reservation-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "reservation-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "reservation-api-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "reservation-api",
+            "claim.name": "resource_access.reservation-api.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "pricing-inventory-access",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "inventory-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "inventory-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "inventory-api-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "inventory-api",
+            "claim.name": "resource_access.inventory-api.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reservation-inventory-access",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "inventory-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "inventory-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "inventory-api-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "inventory-api",
+            "claim.name": "resource_access.inventory-api.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "name": "rentflow-maintenance",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm-management-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "realm-management",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "realm-management-roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-client-role-mapper",
+          "config": {
+            "usermodel.clientRoleMapping.clientId": "realm-management",
+            "claim.name": "resource_access.realm-management.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "subject",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "config": {
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "defaultDefaultClientScopes": [],
+  "defaultOptionalClientScopes": [],
+  "clientScopeMappings": {
+    "inventory-api": [
+      {
+        "clientScope": "pricing-inventory-access",
+        "roles": [
+          "inventory:read"
+        ]
+      },
+      {
+        "clientScope": "reservation-inventory-access",
+        "roles": [
+          "inventory:reserve"
+        ]
+      }
+    ],
+    "realm-management": [
+      {
+        "clientScope": "rentflow-maintenance",
+        "roles": [
+          "realm-admin"
+        ]
+      }
+    ]
+  },
+  "scopeMappings": [],
+  "users": [
+    {
+      "username": "service-account-pricing-service",
+      "enabled": true,
+      "serviceAccountClientId": "pricing-service",
+      "realmRoles": [],
+      "clientRoles": {
+        "inventory-api": [
+          "inventory:read"
+        ]
+      }
+    },
+    {
+      "username": "service-account-reservation-service",
+      "enabled": true,
+      "serviceAccountClientId": "reservation-service",
+      "realmRoles": [],
+      "clientRoles": {
+        "inventory-api": [
+          "inventory:reserve"
+        ]
+      }
+    },
+    {
+      "username": "service-account-rentflow-realm-maintainer",
+      "enabled": true,
+      "serviceAccountClientId": "rentflow-realm-maintainer",
+      "realmRoles": [],
+      "clientRoles": {
+        "realm-management": [
+          "realm-admin"
+        ]
+      }
+    }
+  ],
+  "_rentflow": {
+    "userProfile": {
+      "unmanagedAttributePolicy": "ADMIN_EDIT"
+    },
+    "clientSecrets": {
+      "pricing-service": {
+        "file": "pricing-service-client-secret",
+        "rotatable": true
+      },
+      "reservation-service": {
+        "file": "reservation-service-client-secret",
+        "rotatable": true
+      },
+      "rentflow-realm-maintainer": {
+        "file": "realm-maintainer-client-secret",
+        "rotatable": false
+      }
+    },
+    "operator": {
+      "username": "rentflow-operator",
+      "enabled": true,
+      "firstName": "rentflow-operator",
+      "lastName": "Local",
+      "email": "rentflow-operator@fixtures.invalid",
+      "attributes": {
+        "rentflow.managed": [
+          "true"
+        ]
+      },
+      "requiredActions": [],
+      "realmRoles": [],
+      "clientRoles": {
+        "realm-management": [
+          "realm-admin"
+        ]
+      }
+    },
+    "fixtures": [
+      {
+        "username": "customer-a",
+        "enabled": true,
+        "firstName": "customer-a",
+        "lastName": "Local",
+        "email": "customer-a@fixtures.invalid",
+        "attributes": {
+          "rentflow.managed": [
+            "true"
+          ]
+        },
+        "requiredActions": [],
+        "realmRoles": [
+          "CUSTOMER"
+        ],
+        "clientRoles": {}
+      },
+      {
+        "username": "customer-b",
+        "enabled": true,
+        "firstName": "customer-b",
+        "lastName": "Local",
+        "email": "customer-b@fixtures.invalid",
+        "attributes": {
+          "rentflow.managed": [
+            "true"
+          ]
+        },
+        "requiredActions": [],
+        "realmRoles": [
+          "CUSTOMER"
+        ],
+        "clientRoles": {}
+      },
+      {
+        "username": "staff",
+        "enabled": true,
+        "firstName": "staff",
+        "lastName": "Local",
+        "email": "staff@fixtures.invalid",
+        "attributes": {
+          "rentflow.managed": [
+            "true"
+          ]
+        },
+        "requiredActions": [],
+        "realmRoles": [
+          "STAFF"
+        ],
+        "clientRoles": {}
+      }
+    ]
+  }
+}

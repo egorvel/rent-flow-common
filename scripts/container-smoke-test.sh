@@ -41,6 +41,11 @@ export COMPOSE_PROFILES="observability"
 export TRACING_EXPORT_ENABLED="true"
 export TRACING_SAMPLING_PROBABILITY="1.0"
 export INVENTORY_PORT PRICING_PORT RESERVATION_PORT
+export KEYCLOAK_REALM=rentflow-smoke
+export KEYCLOAK_HTTP_PORT="${KEYCLOAK_SMOKE_PORT:-18180}"
+export KEYCLOAK_PKCE_PORT="${KEYCLOAK_SMOKE_PKCE_PORT:-18765}"
+export SECURITY_STATE_DIR
+SECURITY_STATE_DIR="$(mktemp -d /tmp/rentflow-common-security.XXXXXXXX)"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -53,6 +58,11 @@ compose() {
 
 cleanup() {
     compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+}
+
+finish_cleanup() {
+    cleanup
+    python3 -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' "$SECURITY_STATE_DIR"
 }
 
 diagnose_failure() {
@@ -770,7 +780,7 @@ assert_pricing_cached() {
         || fail "Cached pricing did not match the persisted pricing"
 }
 
-trap cleanup EXIT
+trap finish_cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap diagnose_failure ERR
@@ -784,6 +794,9 @@ cleanup
 
 info "Validating Compose configuration"
 compose config --quiet
+
+info "Verifying isolated Keycloak provisioning, PKCE, machine grants and persistence"
+./scripts/security-smoke-test.sh --combined
 
 info "Building the Inventory, Pricing, and Reservation runtime images"
 compose build inventory pricing reservation

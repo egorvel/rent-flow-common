@@ -1,0 +1,220 @@
+# Local identity walkthrough and operations
+
+Common implements the Phase 0 provider contract and Phase 1 identity foundation. Inventory,
+Pricing and Reservation still need their application security phases: creating an identity or
+issuing a token does not secure an API. This is an HTTP development stack, not a production deployment.
+
+## Follow a login without exposing credentials
+
+After the setup in [README](README.md), run:
+
+```bash
+./scripts/local-keycloak.sh verify-browser
+```
+
+The pinned test container opens a headless Chromium browser, logs in through Keycloak's actual
+form as each local fixture, and exercises `rentflow-pkce-check`. It starts a temporary loopback
+callback server, creates a random PKCE verifier, sends only its SHA-256 challenge at authorization,
+checks callback state, and exchanges the returned code with the original verifier. It validates
+the ID-token nonce and verifies token signatures against the realm's actual JWKS.
+
+The checker requests `openid inventory-access`, `openid pricing-access` and
+`openid reservation-access` separately. It also checks incorrect verifiers, code reuse, missing
+PKCE, plain challenges, unregistered redirects and invalid callback state. No password grant is
+enabled. Screenshots, browser traces, video, HAR files, callback queries and token bodies are not
+recorded. Output names the assertions rather than displaying credentials.
+
+| Claim | Meaning in RentFlow |
+| --- | --- |
+| `iss` | Exact realm URL; a token from another environment is rejected |
+| `sub` | Stable identity inside that issuer; `(iss, sub)` identifies the person |
+| `aud` | Intended recipient API(s); each API checks its own membership |
+| `azp` | Client that obtained the token, such as `rentflow-pkce-check` or `pricing-service` |
+| `resource_access.inventory-api.roles` | Inventory-specific permissions, filtered by allowed scope mappings |
+| `exp`, `iat`, optional `nbf` | Time constraints; access-token lifetime is 300 seconds |
+| Payload `typ` | `Bearer` for the default Keycloak access-token profile |
+
+The three Swagger registrations are prepared with exact callbacks/origins. Their service-side
+Authorize buttons are wired when those services adopt security. Each Swagger UI defaults to its
+own API audience. Multiple audiences are supported by the contract; a future frontend can request
+the set its workflow needs. Separate tokens/client registrations can reuse one Keycloak SSO login.
+
+`CUSTOMER` and `STAFF` currently have no API permission composites. The fixtures have distinct
+subjects, but Reservation's identity-to-customer mapping and cross-customer authorization arrive
+in its own phase. None of these human fixtures has administrative or machine permissions.
+
+## Machine identities and administrative identities
+
+`verify` checks machine credentials and issuer networking without requiring human fixtures:
+
+```bash
+./scripts/local-keycloak.sh verify
+```
+
+Pricing gets only audience `inventory-api` and role `inventory:read`. Reservation gets only that
+audience and `inventory:reserve`. Inventory's implementation must limit the latter to reservation
+claims (`AVAILABLE -> RESERVED`) and authorize before idempotent replay. Common grants no general
+status-management, release or catalogue-write permission. Outbound caller wiring is Phase 2;
+Inventory enforcement is Phase 3.
+
+During `bootstrap`, Keycloak creates a temporary administrative service account in `master`.
+The script uses Client Credentials to establish `rentflow-operator` and
+`rentflow-realm-maintainer` in the RentFlow realm, verifies scoped access, deletes the temporary
+master client, then recreates Keycloak without its bootstrap-secret mount. Repeated provisioning
+preserves credentials. Interrupted setup can be resumed with explicit `bootstrap`; ordinary startup
+never recreates an administrator. The local operator is separate from the `staff` business fixture.
+
+The realm maintainer has realm-administration privileges only for this RentFlow realm. Its secret
+is accessible to explicit maintenance tooling, never to application containers. The checker proves
+that the maintainer cannot administer `master`, and business callers cannot administer RentFlow.
+Unmanaged user attributes are editable only by administrators so tooling ownership markers survive
+provisioning without becoming user-controlled identity claims.
+
+## Policy updates and credentials
+
+The checked-in realm template contains policy, service-account grants and fake local-user
+definitions, with no passwords, client secrets, private keys or real people. `init` renders
+non-secret environment values into the ignored runtime import directory and strips `_rentflow`.
+Startup import initializes a missing realm and skips an existing one. Use explicit updates:
+
+```bash
+./scripts/local-keycloak.sh policy plan
+./scripts/local-keycloak.sh policy apply
+```
+
+The template declares the policy; Python implements the API operations needed to apply it:
+
+| Template section | What Python reads and applies |
+| --- | --- |
+| `roles` | Realm/client role definitions and their `composite`/`composites` declarations |
+| `scopeMappings` | Allowed realm roles for a client or client scope |
+| `clientScopeMappings` | Allowed client roles for a client or client scope, including maintenance |
+| `users` | Service-account identity and its `realmRoles`/`clientRoles` assignments |
+| `defaultDefaultClientScopes`, `defaultOptionalClientScopes` | Realm defaults, including nonempty lists |
+| `_rentflow.userProfile` | Profile settings applied through Keycloak's separate user-profile API |
+| `_rentflow.clientSecrets` | Credential-file references and which clients allow explicit rotation |
+| `_rentflow.operator`, `_rentflow.fixtures` | Local-user properties and explicit role assignments |
+
+For example, this native Keycloak user declaration assigns Pricing its role:
+
+```json
+{
+  "username": "service-account-pricing-service",
+  "enabled": true,
+  "serviceAccountClientId": "pricing-service",
+  "realmRoles": [],
+  "clientRoles": {"inventory-api": ["inventory:read"]}
+}
+```
+
+`clientScopeMappings` separately allows that role in `pricing-inventory-access`; the assignment
+and the allowed scope must both permit it. Adding a different grant no longer requires a
+Pricing/Reservation-specific branch in Python. An empty role list removes undeclared direct grants.
+Role composites are updated from their declarations rather than always being cleared.
+
+`_rentflow` is our own template extension, not a Keycloak realm property. It is never sent to
+startup import. This keeps fake customers optional and credentials in private files. `bootstrap`
+creates the declared operator, while `fixtures apply` creates declared fixture users. `policy apply`
+updates those managed users only when they already exist; it does not create optional fixtures.
+Existing passwords and subjects are preserved. Service-account entries in `users` are native
+Keycloak fields and are included in import.
+
+The tool owns its template's declared settings and role grants. It preserves unrelated objects and existing user/client IDs, signing keys, sessions
+and passwords. There are no migration files, version markers or upgrade sequences. The current
+template defines the desired settings; `plan` shows the differences and `apply`
+updates them through the Admin API, then reads them back. A second apply makes no changes.
+
+To change the supported policy declarations, edit the checked-in template, run
+`policy plan`, then `policy apply`. Run `verify` or `verify-browser` when you want token/login
+verification; policy updates do not build or start the test container. Updates are serialized by
+a state-directory lock and can be rerun after partial failure. Keycloak's Admin API does not
+provide a transaction across all these objects. Existing realms work without resetting data;
+any old policy-version attribute is unused. Back up before risky updates.
+
+Python still renders placeholders, resolves Keycloak's internal IDs, generates/injects secrets,
+performs bootstrap/rotation, preserves existing data and executes HTTP/Docker operations. Those
+are mechanisms rather than grant decisions. Verification code independently asserts the agreed
+RentFlow token contract; intentionally changing that contract also requires updating its tests.
+
+Secret files under `.secrets/security/` have mode `0600`, and their directory has mode `0700`.
+Compose mounts only selected files into each server. Files are not encrypted by Compose and must
+be treated as credentials. Keep private backups of both the identity database and local secret
+files; never attach them to issues or include them in source/build contexts. The setup command
+preserves existing files and refuses a changed project/realm/port target. To change initialized
+ports deliberately, stop the old instance, back up its files, update the non-secret settings and
+matching `settings.json` target, rerun `init`, then `bootstrap`/`policy apply` as appropriate. Do not
+point two independent projects at the same state directory.
+
+Rotate one business caller explicitly:
+
+```bash
+./scripts/local-keycloak.sh rotate-client pricing-service
+./scripts/local-keycloak.sh rotate-client reservation-service
+```
+
+Rotation persists a private pending value before updating Keycloak, making interruption resumable.
+It verifies the new credential, denial of the previous credential and continued operation of the
+other caller, then replaces the recipient file. When Phase 2 callers exist, reload/restart the
+affected caller with that file. The local single-secret model has a brief acquisition interruption;
+existing access tokens remain usable until expiry. Policy updates never silently rotate credentials.
+Production overlap rotation is a later design.
+
+## Persistence, upgrades and recovery
+
+`stop`, `start` and ordinary Compose recreation preserve the dedicated identity database volume.
+`local-postgres.sh reset` affects only application storage. `docker compose down --volumes` also
+deletes identity state in that Compose project; use it only for intentional complete removal.
+No identity reset operation is provided.
+
+For a consistent local database backup, stop Keycloak first and keep the dump private:
+
+```bash
+./scripts/local-keycloak.sh stop
+docker compose up --detach --wait rentflow-keycloak-postgres
+umask 077
+mkdir -p .secrets/security/backups
+docker compose exec --no-TTY rentflow-keycloak-postgres \
+  pg_dump --username rentflow_identity_admin --format custom rentflow_keycloak \
+  > .secrets/security/backups/keycloak.dump
+./scripts/local-keycloak.sh start
+```
+
+For a binary upgrade, review the target Keycloak upgrade guide, preserve the old image reference
+and private files, rehearse the upgrade/restore in a separate project, update the image version and
+digest, then run the combined suite. Restore the compatible image and database backup together
+on rollback; never downgrade a migrated database in place. Full operational restore/HA requirements
+remain Phase 8.
+
+If administrative access is lost, restore missing local credential files from a private backup
+first. For a temporary recovery administrator, stop every Keycloak server using this database:
+
+```bash
+docker compose stop rentflow-keycloak
+docker compose up --detach --wait rentflow-keycloak-postgres
+docker compose run --rm --no-deps rentflow-keycloak \
+  bootstrap-admin user --username recovery-admin
+docker compose up --detach --wait rentflow-keycloak
+```
+
+The recovery command prompts privately for a password. Log in through the master administration
+console, repair the RentFlow operator/maintenance access deliberately, verify it, then delete the
+recovery administrator. Keep client-secret files consistent with any deliberate credential changes.
+This uses Keycloak's supported offline
+[bootstrap/recovery procedure](https://www.keycloak.org/server/bootstrap-admin-recovery); ordinary
+startup flags cannot recreate the initial account once `master` exists.
+
+## Acceptance checks
+
+`scripts/security-smoke-test.sh` exercises an isolated fresh installation, repeated provisioning,
+browser and machine grants, database/network isolation, startup import skip, a policy update
+that removes an obsolete audience/excess grant, no-op reapply, preservation
+of unrelated objects/users/keys/credentials, both secret rotations and server/database recreation.
+It also changes declarations for a new permission, service/fixture assignments, scope mappings,
+role composites, realm defaults, profile settings and realm metadata, then restores the baseline.
+Its temporary credentials and volumes are deleted on exit. The full combined smoke invokes the
+same checks before existing business/observability flows and final stack recreation. Automated
+host checks use explicit loopback resolution for the canonical hostname; container checks use its
+Compose DNS alias, and Chromium uses its own hosts mapping. No system hosts file is modified.
+
+Later phases add service HTTP denials, ownership, key rotation and cached-key/outage scenarios.
+Production exposure remains gated on TLS, infrastructure security and operational hardening.

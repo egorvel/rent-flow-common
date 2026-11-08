@@ -1,4 +1,81 @@
 services:
+  rentflow-keycloak-postgres:
+    image: postgres:18.4-alpine
+    entrypoint: [bash, /security/entrypoint.sh]
+    command: [postgres]
+    environment:
+      POSTGRES_USER: rentflow_identity_admin
+      POSTGRES_DB: postgres
+    secrets:
+      - keycloak_postgres_admin_password
+      - keycloak_db_password
+    networks: [identity-db]
+    volumes:
+      - rentflow-keycloak-postgres-data:/var/lib/postgresql
+      - ./security/postgres/entrypoint.sh:/security/entrypoint.sh:ro
+      - ./security/postgres/init-keycloak.sh:/docker-entrypoint-initdb.d/10-keycloak.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready --username rentflow_identity_admin --dbname rentflow_keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  rentflow-keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1@sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332
+    user: "${SECURITY_UID:-1000}:0"
+    entrypoint: [bash, /security/entrypoint.sh]
+    command: [start-dev, --import-realm]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://rentflow-keycloak-postgres:5432/rentflow_keycloak
+      KC_DB_USERNAME: rentflow_keycloak
+      KC_HOSTNAME: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
+      KC_HTTP_PORT: "${KEYCLOAK_HTTP_PORT:-8180}"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HTTP_MANAGEMENT_SCHEME: http
+      KC_LOG_LEVEL: warn
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-rentflow-local}
+      KEYCLOAK_PKCE_PORT: "${KEYCLOAK_PKCE_PORT:-8765}"
+    ports:
+      - "127.0.0.1:${KEYCLOAK_HTTP_PORT:-8180}:${KEYCLOAK_HTTP_PORT:-8180}"
+    secrets: [keycloak_db_password]
+    volumes:
+      - ./security/keycloak/entrypoint.sh:/security/entrypoint.sh:ro
+      - ${SECURITY_STATE_DIR:-./.secrets/security}/runtime/import:/opt/keycloak/data/import:ro
+    networks:
+      default:
+        aliases: [auth.rentflow.test]
+      identity-db:
+    depends_on:
+      rentflow-keycloak-postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - "{ printf 'HEAD /health/ready HTTP/1.0\\r\\n\\r\\n' >&3; head -n 1 <&3 | grep -q ' 200 '; } 3<>/dev/tcp/127.0.0.1/9000"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 120s
+
+  # temporary container that runs security integration checks
+  security-check:
+    image: rentflow-security-check:phase1
+    profiles: [security-tools]
+    build:
+      context: .
+      dockerfile: security/check/Dockerfile
+    user: "${SECURITY_UID:-1000}"
+    volumes:
+      - ${SECURITY_STATE_DIR:-./.secrets/security}:/state:ro
+    read_only: true
+    tmpfs: [/tmp]
+
   rentflow-postgres:
     image: postgres:18.4-alpine
     environment:
@@ -250,6 +327,7 @@ services:
     restart: on-failure
 
 volumes:
+  rentflow-keycloak-postgres-data:
   rentflow-postgres-data:
   rentflow-kafka-data:
   rentflow-prometheus-data:
@@ -257,3 +335,13 @@ volumes:
   rentflow-tempo-data:
   rentflow-alloy-data:
   rentflow-grafana-data:
+
+networks:
+  identity-db:
+    internal: true
+
+secrets:
+  keycloak_postgres_admin_password:
+    file: ${SECURITY_STATE_DIR:-./.secrets/security}/postgres-admin-password
+  keycloak_db_password:
+    file: ${SECURITY_STATE_DIR:-./.secrets/security}/keycloak-db-password

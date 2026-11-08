@@ -5,5 +5,7 @@ target/
 .project
 .settings/
 .env
+.secrets/
+__pycache__/
 *.log
 .specs/service-skeleton/eval-reports/

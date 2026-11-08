@@ -7,4 +7,4 @@
 ## Projects
 - Inventory: /home/yegor/Projects/RentFlow/rent-flow-inventory
 - Pricing: /home/yegor/Projects/RentFlow/rent-flow-pricing
-- Reservations: /home/yegor/Projects/RentFlow/rent-flow-reservations
+- Reservations: /home/yegor/Projects/RentFlow/rent-flow-reservation
