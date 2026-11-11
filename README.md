@@ -3,6 +3,55 @@
 This repository owns the local infrastructure topology shared by the Rent Flow services. Application-level
 Kafka behavior remains in the service that publishes or consumes an event.
 
+## Local development infrastructure
+
+Start the shared infrastructure for applications running in your IDE or shell:
+
+```bash
+./scripts/local-dev.sh start
+```
+
+This starts PostgreSQL, Kafka, Redis (Pricing's cache), and Keycloak with its separate PostgreSQL,
+and waits for health checks. Inventory, Pricing, Reservation and the optional observability stack
+are started separately. Docker Engine, Docker Compose and Python 3 are required; keep the three
+service repositories alongside Common so PostgreSQL can mount their schema initialization scripts.
+
+Before the first start, run `./scripts/local-keycloak.sh init` and
+`./scripts/local-keycloak.sh bootstrap`. For browser login, add `127.0.0.1 auth.rentflow.test`
+to your hosts file. Optional test users can be created with `./scripts/local-keycloak.sh fixtures apply`.
+See [Local Keycloak](#local-keycloak) for credentials and setup details. Routine startup uses Keycloak's
+existing policy checks; it reports drift so you can review it with `local-keycloak.sh policy plan`
+and reconcile it explicitly with `local-keycloak.sh policy apply`.
+
+```bash
+./scripts/local-dev.sh status
+./scripts/local-dev.sh logs    # Ctrl+C stops following logs
+./scripts/local-dev.sh stop    # Keeps database and Kafka volumes
+```
+
+The script works from any working directory and reads Common's Compose `.env` settings and shell
+overrides. Default host endpoints are PostgreSQL `localhost:5432`, Kafka `localhost:9092`, Redis
+`localhost:6379`, and Keycloak `http://auth.rentflow.test:8180`. Match any overridden ports in your
+IDE run configurations; Compose's `.env` is not automatically exported to Java processes.
+
+When launching the applications locally:
+
+- Use `SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/rentflow` and each application's own
+  database login: `inventory` / `inventory-local`, `pricing` / `pricing-local`, or
+  `reservation` / `reservation-local` (local defaults).
+- Set `SERVER_PORT` to `8080` for Inventory, `8081` for Pricing, and `8082` for Reservation.
+- Set `INVENTORY_BASE_URL=http://localhost:8080` for Pricing and Reservation. Inventory must also
+  be running for their cross-service operations.
+- Use `SPRING_PROFILES_ACTIVE=local` for Inventory and Reservation, including local Kafka topic
+  provisioning. Their default `KAFKA_BOOTSTRAP_SERVERS` is `localhost:9092`; Pricing's Redis defaults
+  are `localhost:6379`.
+- Configure Inventory's `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI` as
+  `http://auth.rentflow.test:8180/realms/rentflow-local` and
+  `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI` as that issuer plus
+  `/protocol/openid-connect/certs`. The hostname must resolve on the host for these requests too.
+
+Grafana, Prometheus, Loki, Tempo and Alloy are optional for ordinary development and debugger use.
+See [Shared observability](#shared-observability) when you want collected metrics, logs or traces.
 
 ## Local Keycloak
 

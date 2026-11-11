@@ -166,6 +166,38 @@ Production overlap rotation is a later design.
 deletes identity state in that Compose project; use it only for intentional complete removal.
 No identity reset operation is provided.
 
+The `.secrets/security/initialized` file records completed provisioning, but lives outside Docker's
+identity volume. If that volume is recreated while private files remain, Keycloak can import the
+realm with newly generated client secrets while the old completion marker causes `bootstrap` to
+skip credential provisioning. `start` and `bootstrap` then fail with maintainer-token HTTP `401`.
+Running `init` again preserves the saved files and cannot repair the database's client credentials.
+Restore the matching identity database backup to recover previous users and keys.
+
+If the new database is intentional and the imported realm has **not yet been provisioned** (no
+`rentflow-operator` account or `rentflow.credentials.initialized` client attributes), finish its
+setup using a temporary bootstrap service account. First back up the current identity database
+as below, omitting the final `start` until recovery completes. With the default state directory, run:
+
+```bash
+docker compose stop rentflow-keycloak
+docker compose --file compose.yaml \
+  --file .secrets/security/runtime/bootstrap.compose.json \
+  run --rm --no-deps rentflow-keycloak bootstrap-admin service \
+  --client-id rentflow-bootstrap \
+  --client-secret:env KC_BOOTSTRAP_ADMIN_CLIENT_SECRET --no-prompt
+mv .secrets/security/initialized .secrets/security/backups/initialized.before-recovery
+./scripts/local-keycloak.sh bootstrap
+./scripts/local-keycloak.sh start
+```
+
+Use your configured `SECURITY_STATE_DIR` in these paths if overridden. The override mounts the
+existing bootstrap-secret file; the entrypoint supplies it through an environment variable without
+putting its value in command arguments. `bootstrap` provisions the saved client credentials and
+operator, removes the temporary master account and writes a new completion marker. Removing the
+marker alone is insufficient because ordinary startup flags cannot recreate a bootstrap account
+once `master` exists. For an already provisioned realm with lost credentials, use the recovery
+administrator procedure below instead.
+
 For a consistent local database backup, stop Keycloak first and keep the dump private:
 
 ```bash

@@ -15,6 +15,12 @@ class SecurityError(Exception):
     pass
 
 
+class TokenError(SecurityError):
+    def __init__(self, client, status):
+        super().__init__(f"Token acquisition failed for {client} (HTTP {status})")
+        self.status = status
+
+
 def require(condition, message):
     if not condition:
         raise SecurityError(message)
@@ -147,8 +153,8 @@ class Api:
 
     def token(self, client, secret, realm=None):
         status, data = self.token_response(client, secret, realm)
-        require(status == 200 and isinstance(data, dict) and "access_token" in data,
-                f"Token acquisition failed for {client} (HTTP {status})")
+        if not (status == 200 and isinstance(data, dict) and "access_token" in data):
+            raise TokenError(client, status)
         return data["access_token"]
 
     def admin(self, method, path="", data=None, expected=None):
@@ -166,5 +172,15 @@ class Api:
 
 def maintenance(settings):
     api = Api(settings)
-    api.bearer = api.token("rentflow-realm-maintainer", settings.secret("realm-maintainer-client-secret"))
+    try:
+        api.bearer = api.token("rentflow-realm-maintainer", settings.secret("realm-maintainer-client-secret"))
+    except TokenError as error:
+        if error.status != 401:
+            raise
+        raise SecurityError(
+            f"{error}. The saved maintainer credential cannot authenticate to the current identity database. "
+            "If its volume was recreated, the local initialized marker may be stale. "
+            "Running init again does not restore client credentials in an existing realm. "
+            "See SECURITY_WALKTHROUGH.md: Persistence, upgrades and recovery."
+        ) from None
     return api
