@@ -153,7 +153,7 @@ def rotate(local, client):
         if other != client and secret["rotatable"]:
             Api(settings).token(other, settings.secret(secret["file"]))
     print(f"Rotated {client}; previous secret rejected and other caller unaffected.")
-    print("Phase 2 callers must reload/restart with their recipient file after rotation.")
+    print("Phase 3/4 callers must reload/restart with their recipient file after rotation.")
 
 
 def main():

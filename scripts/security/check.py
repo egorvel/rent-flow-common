@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
 import json
 from pathlib import Path
+import re
 import secrets
 import sys
 import threading
@@ -20,6 +21,18 @@ from policy import Policy, desired
 # Independent acceptance expectations, never used to configure or assign permissions.
 BUSINESS_CLIENTS = {"pricing-service": "inventory:read", "reservation-service": "inventory:reserve"}
 FIXTURES = {"customer-a": "CUSTOMER", "customer-b": "CUSTOMER", "staff": "STAFF"}
+INVENTORY_HUMAN_ROLES = {
+    "CUSTOMER": {"inventory:read", "inventory:list"},
+    "STAFF": {"inventory:read", "inventory:list", "inventory:manage", "inventory:history"},
+}
+
+
+def human_permissions(claims, user, audience):
+    expected = INVENTORY_HUMAN_ROLES[FIXTURES[user]] if audience == "inventory-api" else set()
+    resource = claims.get("resource_access", {})
+    require(set(resource) == ({audience} if expected else set()), "Human roles belong only to requested API")
+    require(set(resource.get(audience, {}).get("roles", [])) == expected, "Exact approved human permissions")
+    require(not claims.get("realm_access", {}).get("roles"), "Realm business labels are not API authorities")
 
 
 def settings():
@@ -153,8 +166,8 @@ class Callback:
         self.server.server_close()
 
 
-def browser(settings):
-    from playwright.sync_api import sync_playwright
+def browser(settings, inventory=False):
+    from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
 
     machine(settings)
     api = Api(settings)
@@ -162,41 +175,75 @@ def browser(settings):
     with Callback(settings.pkce_port) as callback, sync_playwright() as playwright:
         chromium = playwright.chromium.launch(headless=True, args=["--no-proxy-server"])
 
-        def authorize(user, scope="inventory-access", changes=None):
+        def authorize(user, scope="inventory-access", changes=None, client="rentflow-pkce-check"):
             state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             verifier = secrets.token_urlsafe(48)
             challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode().rstrip("=")
-            attempt = {"verifier": verifier, "nonce": nonce}
+            redirect = (f"http://localhost:{settings.values['inventory_port']}/swagger-ui/oauth2-redirect.html"
+                        if client == "inventory-swagger" else callback_uri)
+            attempt = {"verifier": verifier, "nonce": nonce, "client": client, "redirect": redirect}
             callback.attempts[state] = attempt
-            fields = {"client_id": "rentflow-pkce-check", "response_type": "code", "redirect_uri": callback_uri,
-                      "scope": "openid " + scope, "state": state, "nonce": nonce,
+            fields = {"client_id": client, "response_type": "code", "redirect_uri": redirect,
+                      "scope": ("openid " + scope).strip(), "state": state, "nonce": nonce,
                       "code_challenge": challenge, "code_challenge_method": "S256"}
             if changes:
                 fields.update(changes)
                 fields = {k: v for k, v in fields.items() if v is not None}
             # No tracing, screenshot, video, HAR, storage-state or console capture is enabled.
             context = chromium.new_context(accept_downloads=False)
+            step = "open login"
             try:
                 page = context.new_page()
+                if client == "inventory-swagger":
+                    # Routing cannot intercept later URLs in a redirect chain. Forward the real
+                    # login POST without following redirects, then capture Keycloak's callback
+                    # Location in memory. No code-bearing request reaches the application's logs.
+                    def receive(route):
+                        if route.request.method != "POST":
+                            route.continue_()
+                            return
+                        try:
+                            response = route.fetch(max_redirects=0)
+                            location = response.headers.get("location", "")
+                            if location.startswith(redirect + "?"):
+                                attempt["response"] = parse_qs(urlsplit(location).query)
+                                route.fulfill(status=200, content_type="text/plain", body="PKCE callback received")
+                            else:
+                                route.fulfill(response=response)
+                        except Exception:
+                            attempt["callback_error"] = True
+                            route.fulfill(status=503, content_type="text/plain", body="Callback verification failed")
+                    page.route(re.compile("^" + re.escape(settings.issuer) + "/login-actions/"), receive)
                 page.goto(settings.issuer + "/protocol/openid-connect/auth?" + urlencode(fields))
                 if changes:
                     require(page.locator("#username").count() == 0, "Invalid authorization request rejected before login")
                     require("code" not in parse_qs(urlsplit(page.url).query), "Invalid authorization request has no code")
                     return None
+                step = "fill login form"
                 page.locator("#username").fill(user)
                 page.locator("#password").fill(settings.secret(user + "-password"))
+                step = "submit login"
                 page.locator("#kc-login").click()
-                page.wait_for_url(lambda url: url.startswith(callback_uri), timeout=20000)
+                step = "receive callback"
+                if client != "inventory-swagger":
+                    page.wait_for_url(lambda url: url.startswith(redirect), timeout=20000)
+                require(not attempt.get("callback_error"), "Swagger login redirect acquisition")
                 response = attempt.get("response", {})
                 require(response.get("state") == [state] and len(response.get("code", [])) == 1,
                         "Callback state and authorization code")
                 return dict(attempt, code=response["code"][0])
+            except BrowserTimeout:
+                location = urlsplit(page.url)
+                # Path/origin only: never include the callback query or form-action parameters.
+                raise SecurityError(f"Browser timeout during {step} ({client}, {user}, {scope}); "
+                                    f"page={location.scheme}://{location.netloc}{location.path}; "
+                                    f"callback_received={'response' in attempt}") from None
             finally:
                 context.close()
 
         def exchange(attempt, verifier=None):
-            return api.token_response("rentflow-pkce-check", grant_type="authorization_code",
-                                      code=attempt["code"], redirect_uri=callback_uri,
+            return api.token_response(attempt["client"], grant_type="authorization_code",
+                                      code=attempt["code"], redirect_uri=attempt["redirect"],
                                       code_verifier=verifier or attempt["verifier"])
 
         try:
@@ -205,6 +252,8 @@ def browser(settings):
             require(connection.getresponse().status == 400, "Local callback rejects invalid state")
             connection.close()
             subjects = {}
+            inventory_tokens = {}
+            other_audience_token = None
             for user in FIXTURES:
                 for scope in ["inventory-access", "pricing-access", "reservation-access"]:
                     attempt = authorize(user, scope)
@@ -213,7 +262,12 @@ def browser(settings):
                     audience = scope.replace("-access", "-api")
                     claims = validate(api, tokens["access_token"], audience)
                     require(audiences(claims) == {audience}, "Single requested human audience")
-                    require(not claims.get("resource_access"), "Human tokens have no unapproved API permissions")
+                    require(claims["azp"] == "rentflow-pkce-check", "Verification client azp")
+                    human_permissions(claims, user, audience)
+                    if audience == "inventory-api":
+                        inventory_tokens[user] = tokens
+                    else:
+                        other_audience_token = tokens["access_token"]
                     require("customerId" not in claims, "No trusted domain customer ID in provider token")
                     previous = subjects.setdefault(user, claims["sub"])
                     require(previous == claims["sub"], "Stable subject across audience scopes")
@@ -226,6 +280,24 @@ def browser(settings):
                     status, _ = exchange(attempt)
                     require(status == 400, "Authorization code cannot be reused")
             require(len(set(subjects.values())) == 3, "Three distinct human identities")
+            swagger_tokens = {}
+            for user in FIXTURES:
+                attempt = authorize(user, scope="", client="inventory-swagger")
+                status, tokens = exchange(attempt)
+                require(status == 200, "Swagger default scope Code and PKCE exchange")
+                claims = validate(api, tokens["access_token"], "inventory-api")
+                require(audiences(claims) == {"inventory-api"} and claims["azp"] == "inventory-swagger",
+                        "Swagger has exactly its own audience and client identity")
+                human_permissions(claims, user, "inventory-api")
+                require(claims["sub"] == subjects[user], "Same subject through both approved human clients")
+                identity = validate(api, tokens["id_token"], "inventory-swagger", bearer=False)
+                require(identity["nonce"] == attempt["nonce"] and identity["sub"] == claims["sub"],
+                        "Swagger ID token nonce and identity")
+                swagger_tokens[user] = tokens
+            if inventory:
+                from inventory_check import verify_inventory
+                verify_inventory(settings, inventory_tokens, swagger_tokens, other_audience_token,
+                                 lambda user: exchange(authorize(user))[1])
             attempt = authorize("customer-a")
             status, _ = exchange(attempt, verifier=secrets.token_urlsafe(48))
             require(status == 400, "Incorrect PKCE verifier rejected")
@@ -248,6 +320,8 @@ if __name__ == "__main__":
             machine(config)
         elif stage == "browser":
             browser(config)
+        elif stage == "inventory":
+            browser(config, inventory=True)
         else:
             raise SecurityError("Unknown verification stage")
     except Exception as error:

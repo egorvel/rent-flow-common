@@ -21,7 +21,7 @@ def snapshot(settings):
     api = maintenance(settings)
     tooling = desired(settings)["_rentflow"]
     users = {}
-    for definition in tooling["fixtures"]:
+    for definition in [tooling["operator"], *tooling["fixtures"]]:
         username = definition["username"]
         user = api.admin("GET", "/users?" + urlencode({"username": username, "exact": "true"}))[0]
         users[username] = user["id"]
@@ -30,7 +30,10 @@ def snapshot(settings):
     files = ["keycloak-db-password"]
     files += [secret["file"] for secret in tooling["clientSecrets"].values()]
     files += [user["username"] + "-password" for user in [tooling["operator"], *tooling["fixtures"]]]
-    return {"users": users, "keys": sorted(k["kid"] for k in jwks["keys"]),
+    owned_clients = {client["clientId"] for client in desired(settings)["clients"]}
+    clients = {client["clientId"]: client["id"] for client in api.admin("GET", "/clients")
+               if client["clientId"] in owned_clients}
+    return {"users": users, "clients": clients, "keys": sorted(k["kid"] for k in jwks["keys"]),
             "credentials": {n: hashlib.sha256(settings.secret(n).encode()).hexdigest() for n in files}}
 
 
@@ -141,6 +144,19 @@ def main():
 
     print("Testing existing-realm import skip and explicit policy updates")
     api = maintenance(settings)
+    # Reproduce the pre-Inventory policy on this isolated existing realm. Updating it must
+    # create the new roles/composites/mapping while retaining all subjects and credentials.
+    legacy = desired(settings)
+    for role in legacy["roles"]["realm"]:
+        role["composite"] = False
+        role.pop("composites", None)
+    legacy["clientScopeMappings"]["inventory-api"] = [
+        mapping for mapping in legacy["clientScopeMappings"]["inventory-api"]
+        if mapping["clientScope"] != "inventory-access"]
+    Policy(api, legacy, apply=True).run()
+    resource = api.client("inventory-api")
+    for permission in ("inventory:list", "inventory:manage", "inventory:history"):
+        api.admin("DELETE", f"/clients/{resource['id']}/roles/" + permission)
     api.admin("POST", "/clients", {"clientId": "unrelated-smoke-client", "enabled": True,
                                    "standardFlowEnabled": False, "publicClient": True})
     unrelated_id = api.client("unrelated-smoke-client")["id"]

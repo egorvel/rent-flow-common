@@ -50,6 +50,12 @@ When launching the applications locally:
   `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI` as that issuer plus
   `/protocol/openid-connect/certs`. The hostname must resolve on the host for these requests too.
 
+Inventory now requires bearer tokens for business requests. CUSTOMER can read/list; STAFF can
+also manage items/statuses and inspect history. Apply the updated realm policy explicitly with
+`./scripts/local-keycloak.sh policy plan` and `./scripts/local-keycloak.sh policy apply`; these
+preserve users, subjects and credentials. Pricing and Reservation still lack outbound Client
+Credentials until Phases 3 and 4, so their Inventory-dependent workflows are temporarily blocked.
+
 Grafana, Prometheus, Loki, Tempo and Alloy are optional for ordinary development and debugger use.
 See [Shared observability](#shared-observability) when you want collected metrics, logs or traces.
 
@@ -105,12 +111,40 @@ There are no migration files or policy versions. Run `verify` or `verify-browser
 Neither restart nor policy apply resets users, passwords, keys or client secrets. There is no reset command.
 For rotation, recovery and a claims/PKCE walkthrough, see [the security guide](SECURITY_WALKTHROUGH.md).
 
-Run only the isolated identity checks with `./scripts/security-smoke-test.sh`, or the full stack with
-`./scripts/container-smoke-test.sh`. Both provision their own `rentflow-smoke` realm, keys, temporary
-secret files and identity volume, and remove only their own test resources. Browser/JWT dependencies
+Run the isolated identity checks with `./scripts/security-smoke-test.sh`. To include the secured
+Inventory application and real-provider permission/replay checks, run:
+
+```bash
+./scripts/security-smoke-test.sh --inventory
+```
+
+This additionally builds Inventory, injects its issuer/JWKS through a temporary test override,
+and tests browser CUSTOMER/STAFF tokens and both machine clients against the actual API. Inventory
+uses host port `28080`, configurable with `INVENTORY_SECURITY_SMOKE_PORT`.
+Application PostgreSQL/Kafka use isolated host ports `25432`/`29092`, configurable with
+`INVENTORY_SECURITY_POSTGRES_PORT`/`INVENTORY_SECURITY_KAFKA_PORT`. All checks provision
+their own `rentflow-smoke` realm, keys, temporary secret files and volumes, and remove only their
+own test resources. Browser/JWT dependencies
 are pinned inside the test image. Smoke defaults to identity port `18180` and callback port `18765`;
 set `KEYCLOAK_SMOKE_PORT` and `KEYCLOAK_SMOKE_PKCE_PORT` to change them. Automated checks use their own
 hostname mapping and do not edit `/etc/hosts`. The browser runner currently supports Linux host networking.
+
+The full `./scripts/container-smoke-test.sh` remains a separate acceptance gate. Its Pricing and
+Reservation workflows are pending their application phases; the Inventory suite does not claim
+combined acceptance. Base Compose issuer/caller wiring is deferred until that full gate can pass.
+For a local Inventory container before then, first start infrastructure and apply the realm policy,
+then supply its required settings through the existing Compose run environment mechanism:
+
+```bash
+docker compose run --rm --service-ports --use-aliases \
+  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://auth.rentflow.test:8180/realms/rentflow-local \
+  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://auth.rentflow.test:8180/realms/rentflow-local/protocol/openid-connect/certs \
+  inventory
+```
+
+Use your configured issuer/ports if overridden. Inventory needs no client secret or additional
+public-origin setting. Its local Swagger is available at `/swagger-ui.html`; API resource metadata
+GETs under `/.well-known/oauth-protected-resource` are public and derive URLs from the request.
 
 ## Local PostgreSQL startup
 
@@ -430,6 +464,10 @@ representative workloads. They are not SLOs. Inventory HTTP/SLO and Kafka lag th
 until a suitable workload baseline is available.
 
 ### Verification and lifecycle
+
+During the Inventory-first security rollout, the full suite below is pending Pricing Phase 3 and
+Reservation Phase 4. Use `./scripts/security-smoke-test.sh --inventory` for current Phase 2 evidence.
+The final three-service business/observability requirements below remain required for restoration.
 
 ```bash
 ./scripts/container-smoke-test.sh

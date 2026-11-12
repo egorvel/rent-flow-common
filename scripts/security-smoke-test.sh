@@ -7,7 +7,13 @@ if [[ "${1:-}" == --combined && $# == 1 ]]; then
         || { printf 'ERROR: combined smoke requires its isolated project/state\n' >&2; exit 1; }
     exec python3 scripts/security/smoke.py
 fi
-[[ $# == 0 ]] || { printf 'Usage: %s [--combined]\n' "$0" >&2; exit 1; }
+[[ $# == 0 || ( $# == 1 && "$1" == --inventory ) ]] \
+    || { printf 'Usage: %s [--combined|--inventory]\n' "$0" >&2; exit 1; }
+if [[ "${1:-}" == --inventory ]]; then
+    export INVENTORY_PORT="${INVENTORY_SECURITY_SMOKE_PORT:-28080}"
+    export POSTGRES_PORT="${INVENTORY_SECURITY_POSTGRES_PORT:-25432}"
+    export KAFKA_PORT="${INVENTORY_SECURITY_KAFKA_PORT:-29092}"
+fi
 export COMPOSE_PROJECT_NAME=rentflow-security-smoke
 export KEYCLOAK_REALM=rentflow-smoke
 export KEYCLOAK_HTTP_PORT="${KEYCLOAK_SMOKE_PORT:-18180}"
@@ -22,3 +28,6 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 python3 scripts/security/smoke.py
+if [[ "${1:-}" == --inventory ]]; then
+    python3 scripts/security/inventory_smoke.py
+fi

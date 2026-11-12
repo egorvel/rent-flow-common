@@ -1,8 +1,9 @@
 # Local identity walkthrough and operations
 
-Common implements the Phase 0 provider contract and Phase 1 identity foundation. Inventory,
-Pricing and Reservation still need their application security phases: creating an identity or
-issuing a token does not secure an API. This is an HTTP development stack, not a production deployment.
+Common implements the Phase 0/1 identity foundation and Inventory's Phase 2 provider handoff.
+Inventory now enforces its HTTP security policy. Pricing and Reservation still need inbound
+security and outbound Client Credentials in Phases 3 and 4. Their Inventory-dependent workflows
+are temporarily blocked. This is an HTTP development stack, not a production deployment.
 
 ## Follow a login without exposing credentials
 
@@ -13,10 +14,12 @@ After the setup in [README](README.md), run:
 ```
 
 The pinned test container opens a headless Chromium browser, logs in through Keycloak's actual
-form as each local fixture, and exercises `rentflow-pkce-check`. It starts a temporary loopback
+form as each local fixture, and exercises `rentflow-pkce-check` and `inventory-swagger`. It starts a temporary loopback
 callback server, creates a random PKCE verifier, sends only its SHA-256 challenge at authorization,
 checks callback state, and exchanges the returned code with the original verifier. It validates
-the ID-token nonce and verifies token signatures against the realm's actual JWKS.
+the ID-token nonce and verifies token signatures against the realm's actual JWKS. For Swagger's
+exact registered callback, the browser runner captures the redirect in memory and exchanges the
+code itself; it does not persist browser tokens or change the application's callback handler.
 
 The checker requests `openid inventory-access`, `openid pricing-access` and
 `openid reservation-access` separately. It also checks incorrect verifiers, code reuse, missing
@@ -34,14 +37,16 @@ recorded. Output names the assertions rather than displaying credentials.
 | `exp`, `iat`, optional `nbf` | Time constraints; access-token lifetime is 300 seconds |
 | Payload `typ` | `Bearer` for the default Keycloak access-token profile |
 
-The three Swagger registrations are prepared with exact callbacks/origins. Their service-side
-Authorize buttons are wired when those services adopt security. Each Swagger UI defaults to its
+The three Swagger registrations have exact callbacks/origins. Inventory's local Authorize button
+is now wired; Pricing and Reservation wiring remains pending. Each Swagger UI defaults to its
 own API audience. Multiple audiences are supported by the contract; a future frontend can request
 the set its workflow needs. Separate tokens/client registrations can reuse one Keycloak SSO login.
 
-`CUSTOMER` and `STAFF` currently have no API permission composites. The fixtures have distinct
-subjects, but Reservation's identity-to-customer mapping and cross-customer authorization arrive
-in its own phase. None of these human fixtures has administrative or machine permissions.
+`CUSTOMER` now includes Inventory `read` and `list`; `STAFF` explicitly includes `read`, `list`,
+`manage` and `history`. Their Inventory scope allows exactly those four roles and never `reserve`.
+Pricing/Reservation API grants remain empty. The fixtures have distinct subjects, but Reservation's
+identity-to-customer mapping and cross-customer authorization arrive in Phase 4. Staff can administer
+Inventory items and inspect history, but has no Keycloak administration or machine-only permission.
 
 ## Machine identities and administrative identities
 
@@ -52,10 +57,11 @@ in its own phase. None of these human fixtures has administrative or machine per
 ```
 
 Pricing gets only audience `inventory-api` and role `inventory:read`. Reservation gets only that
-audience and `inventory:reserve`. Inventory's implementation must limit the latter to reservation
+audience and `inventory:reserve`. Inventory limits the latter to reservation
 claims (`AVAILABLE -> RESERVED`) and authorize before idempotent replay. Common grants no general
-status-management, release or catalogue-write permission. Outbound caller wiring is Phase 2;
-Inventory enforcement is Phase 3.
+status-management, release or catalogue-write permission to machines. Inventory enforcement is
+Phase 2; Pricing and Reservation outbound wiring is Phase 3 and Phase 4 respectively. Inventory
+also checks verified `azp`, so accidentally overgranting a machine cannot enable human-only routes.
 
 During `bootstrap`, Keycloak creates a temporary administrative service account in `master`.
 The script uses Client Credentials to establish `rentflow-operator` and
@@ -154,7 +160,7 @@ Rotate one business caller explicitly:
 
 Rotation persists a private pending value before updating Keycloak, making interruption resumable.
 It verifies the new credential, denial of the previous credential and continued operation of the
-other caller, then replaces the recipient file. When Phase 2 callers exist, reload/restart the
+other caller, then replaces the recipient file. When Phase 3/4 callers exist, reload/restart the
 affected caller with that file. The local single-secret model has a brief acquisition interruption;
 existing access tokens remain usable until expiry. Policy updates never silently rotate credentials.
 Production overlap rotation is a later design.
@@ -215,7 +221,7 @@ For a binary upgrade, review the target Keycloak upgrade guide, preserve the old
 and private files, rehearse the upgrade/restore in a separate project, update the image version and
 digest, then run the combined suite. Restore the compatible image and database backup together
 on rollback; never downgrade a migrated database in place. Full operational restore/HA requirements
-remain Phase 8.
+remain Phase 7.
 
 If administrative access is lost, restore missing local credential files from a private backup
 first. For a temporary recovery administrator, stop every Keycloak server using this database:
@@ -241,12 +247,32 @@ startup flags cannot recreate the initial account once `master` exists.
 browser and machine grants, database/network isolation, startup import skip, a policy update
 that removes an obsolete audience/excess grant, no-op reapply, preservation
 of unrelated objects/users/keys/credentials, both secret rotations and server/database recreation.
-It also changes declarations for a new permission, service/fixture assignments, scope mappings,
+It simulates an existing pre-Inventory realm with empty business composites and no list/manage/history
+roles, then applies the current policy and checks preservation. It also changes declarations for a new permission, service/fixture assignments, scope mappings,
 role composites, realm defaults, profile settings and realm metadata, then restores the baseline.
 Its temporary credentials and volumes are deleted on exit. The full combined smoke invokes the
 same checks before existing business/observability flows and final stack recreation. Automated
 host checks use explicit loopback resolution for the canonical hostname; container checks use its
 Compose DNS alias, and Chromium uses its own hosts mapping. No system hosts file is modified.
 
-Later phases add service HTTP denials, ownership, key rotation and cached-key/outage scenarios.
+Run `./scripts/security-smoke-test.sh --inventory` for Inventory's C1 handoff. This runs the
+foundation checks and builds the real Inventory image with isolated application PostgreSQL/Kafka.
+A private temporary Compose override supplies only its issuer/JWKS settings; base `compose.yaml`
+is unchanged. Browser Code + PKCE tokens from both approved human clients perform staff setup,
+customer reads/lists and the direct API matrix. Real Client Credentials tokens prove Pricing
+lookup-only and Reservation all-RESERVED restrictions. Denied writes preserve item/history state;
+same-key replay is isolated across identities, stable across approved human clients and renewed
+tokens, and denied after a fresh token loses permission. Fixture grants are restored afterward,
+and subjects, signing keys and credential files are checked for preservation.
+
+Public metadata checks use request-derived root/path URLs, the exact issuer, header bearer support
+and no certificate binding. There is no Inventory public-origin variable. The test deletes only
+its own project/volumes and temporary credentials, even on failure; it never applies policy to the
+developer realm. Inventory's V5 ledger migration is exercised on fresh smoke storage; existing-data
+migration and rollback evidence belongs to Inventory's implementation acceptance record.
+
+Pricing/Reservation application integration and the final combined gate remain pending Phases 3/4;
+the phase-specific success message is `Inventory security interoperability verification passed`.
+It does not substitute for `Combined container smoke verification passed`. Later phases add
+Reservation ownership, full real-provider key rotation and cached-key/outage scenarios.
 Production exposure remains gated on TLS, infrastructure security and operational hardening.

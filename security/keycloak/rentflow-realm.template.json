@@ -18,11 +18,21 @@
     "realm": [
       {
         "name": "CUSTOMER",
-        "composite": false
+        "composite": true,
+        "composites": {
+          "client": {
+            "inventory-api": ["inventory:read", "inventory:list"]
+          }
+        }
       },
       {
         "name": "STAFF",
-        "composite": false
+        "composite": true,
+        "composites": {
+          "client": {
+            "inventory-api": ["inventory:read", "inventory:list", "inventory:manage", "inventory:history"]
+          }
+        }
       }
     ],
     "client": {
@@ -33,6 +43,18 @@
         },
         {
           "name": "inventory:reserve",
+          "composite": false
+        },
+        {
+          "name": "inventory:list",
+          "composite": false
+        },
+        {
+          "name": "inventory:manage",
+          "composite": false
+        },
+        {
+          "name": "inventory:history",
           "composite": false
         }
       ]
@@ -571,6 +593,10 @@
   "defaultOptionalClientScopes": [],
   "clientScopeMappings": {
     "inventory-api": [
+      {
+        "clientScope": "inventory-access",
+        "roles": ["inventory:read", "inventory:list", "inventory:manage", "inventory:history"]
+      },
       {
         "clientScope": "pricing-inventory-access",
         "roles": [

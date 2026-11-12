@@ -4,5 +4,6 @@ WORKDIR /check
 COPY security/check/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY scripts/security/common.py scripts/security/policy.py scripts/security/check.py ./
+COPY scripts/security/inventory_check.py ./
 COPY security/keycloak/ ./security/keycloak/
 ENTRYPOINT ["python3", "/check/check.py"]
