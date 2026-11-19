@@ -25,10 +25,15 @@ INVENTORY_HUMAN_ROLES = {
     "CUSTOMER": {"inventory:read", "inventory:list"},
     "STAFF": {"inventory:read", "inventory:list", "inventory:manage", "inventory:history"},
 }
+PRICING_HUMAN_ROLES = {
+    "CUSTOMER": {"pricing:read", "pricing:list"},
+    "STAFF": {"pricing:read", "pricing:list", "pricing:manage"},
+}
 
 
 def human_permissions(claims, user, audience):
-    expected = INVENTORY_HUMAN_ROLES[FIXTURES[user]] if audience == "inventory-api" else set()
+    roles = {"inventory-api": INVENTORY_HUMAN_ROLES, "pricing-api": PRICING_HUMAN_ROLES}
+    expected = roles[audience][FIXTURES[user]] if audience in roles else set()
     resource = claims.get("resource_access", {})
     require(set(resource) == ({audience} if expected else set()), "Human roles belong only to requested API")
     require(set(resource.get(audience, {}).get("roles", [])) == expected, "Exact approved human permissions")
@@ -166,7 +171,7 @@ class Callback:
         self.server.server_close()
 
 
-def browser(settings, inventory=False):
+def browser(settings, inventory=False, pricing=False):
     from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
 
     machine(settings)
@@ -179,8 +184,9 @@ def browser(settings, inventory=False):
             state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             verifier = secrets.token_urlsafe(48)
             challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode().rstrip("=")
-            redirect = (f"http://localhost:{settings.values['inventory_port']}/swagger-ui/oauth2-redirect.html"
-                        if client == "inventory-swagger" else callback_uri)
+            swagger = client in ("inventory-swagger", "pricing-swagger")
+            port = settings.values[client.replace("-swagger", "_port")] if swagger else None
+            redirect = f"http://localhost:{port}/swagger-ui/oauth2-redirect.html" if swagger else callback_uri
             attempt = {"verifier": verifier, "nonce": nonce, "client": client, "redirect": redirect}
             callback.attempts[state] = attempt
             fields = {"client_id": client, "response_type": "code", "redirect_uri": redirect,
@@ -194,7 +200,7 @@ def browser(settings, inventory=False):
             step = "open login"
             try:
                 page = context.new_page()
-                if client == "inventory-swagger":
+                if swagger:
                     # Routing cannot intercept later URLs in a redirect chain. Forward the real
                     # login POST without following redirects, then capture Keycloak's callback
                     # Location in memory. No code-bearing request reaches the application's logs.
@@ -225,7 +231,7 @@ def browser(settings, inventory=False):
                 step = "submit login"
                 page.locator("#kc-login").click()
                 step = "receive callback"
-                if client != "inventory-swagger":
+                if not swagger:
                     page.wait_for_url(lambda url: url.startswith(redirect), timeout=20000)
                 require(not attempt.get("callback_error"), "Swagger login redirect acquisition")
                 response = attempt.get("response", {})
@@ -253,6 +259,7 @@ def browser(settings, inventory=False):
             connection.close()
             subjects = {}
             inventory_tokens = {}
+            pricing_tokens = {}
             other_audience_token = None
             for user in FIXTURES:
                 for scope in ["inventory-access", "pricing-access", "reservation-access"]:
@@ -266,6 +273,8 @@ def browser(settings, inventory=False):
                     human_permissions(claims, user, audience)
                     if audience == "inventory-api":
                         inventory_tokens[user] = tokens
+                    elif audience == "pricing-api":
+                        pricing_tokens[user] = tokens
                     else:
                         other_audience_token = tokens["access_token"]
                     require("customerId" not in claims, "No trusted domain customer ID in provider token")
@@ -280,24 +289,36 @@ def browser(settings, inventory=False):
                     status, _ = exchange(attempt)
                     require(status == 400, "Authorization code cannot be reused")
             require(len(set(subjects.values())) == 3, "Three distinct human identities")
-            swagger_tokens = {}
-            for user in FIXTURES:
-                attempt = authorize(user, scope="", client="inventory-swagger")
-                status, tokens = exchange(attempt)
-                require(status == 200, "Swagger default scope Code and PKCE exchange")
-                claims = validate(api, tokens["access_token"], "inventory-api")
-                require(audiences(claims) == {"inventory-api"} and claims["azp"] == "inventory-swagger",
-                        "Swagger has exactly its own audience and client identity")
-                human_permissions(claims, user, "inventory-api")
-                require(claims["sub"] == subjects[user], "Same subject through both approved human clients")
-                identity = validate(api, tokens["id_token"], "inventory-swagger", bearer=False)
-                require(identity["nonce"] == attempt["nonce"] and identity["sub"] == claims["sub"],
-                        "Swagger ID token nonce and identity")
-                swagger_tokens[user] = tokens
+            swagger_tokens = {"inventory": {}, "pricing": {}}
+            for resource in swagger_tokens:
+                client, audience = resource + "-swagger", resource + "-api"
+                for user in FIXTURES:
+                    attempt = authorize(user, scope="", client=client)
+                    status, tokens = exchange(attempt)
+                    require(status == 200, "Swagger default scope Code and PKCE exchange")
+                    claims = validate(api, tokens["access_token"], audience)
+                    require(audiences(claims) == {audience} and claims["azp"] == client,
+                            "Swagger has exactly its own audience and client identity")
+                    human_permissions(claims, user, audience)
+                    require(claims["sub"] == subjects[user], "Same subject through both approved human clients")
+                    identity = validate(api, tokens["id_token"], client, bearer=False)
+                    require(identity["nonce"] == attempt["nonce"] and identity["sub"] == claims["sub"],
+                            "Swagger ID token nonce and identity")
+                    swagger_tokens[resource][user] = tokens
+
+            def renew(user, scope="inventory-access"):
+                status, tokens = exchange(authorize(user, scope))
+                require(status == 200, "Renewed browser Code and PKCE exchange")
+                validate(api, tokens["access_token"], scope.replace("-access", "-api"))
+                return tokens
+
             if inventory:
                 from inventory_check import verify_inventory
-                verify_inventory(settings, inventory_tokens, swagger_tokens, other_audience_token,
-                                 lambda user: exchange(authorize(user))[1])
+                verify_inventory(settings, inventory_tokens, swagger_tokens["inventory"], other_audience_token, renew)
+            if pricing:
+                from pricing_check import verify_pricing
+                verify_pricing(settings, pricing_tokens, swagger_tokens["pricing"], inventory_tokens,
+                               lambda user: renew(user, "pricing-access"))
             attempt = authorize("customer-a")
             status, _ = exchange(attempt, verifier=secrets.token_urlsafe(48))
             require(status == 400, "Incorrect PKCE verifier rejected")
@@ -322,6 +343,8 @@ if __name__ == "__main__":
             browser(config)
         elif stage == "inventory":
             browser(config, inventory=True)
+        elif stage == "pricing":
+            browser(config, inventory=True, pricing=True)
         else:
             raise SecurityError("Unknown verification stage")
     except Exception as error:

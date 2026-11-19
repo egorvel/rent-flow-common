@@ -119,6 +119,25 @@ def declarative_policy(settings):
     print("Template-driven role grants, scope mappings, composites, defaults, profile and local users passed")
 
 
+def pricing_policy_update(settings):
+    """Upgrade an existing Inventory-enabled realm without disturbing its grants or identities."""
+    api = maintenance(settings)
+    before = snapshot(settings)
+    previous = desired(settings)
+    for role in previous["roles"]["realm"]:
+        role["composites"]["client"].pop("pricing-api")
+    previous["clientScopeMappings"].pop("pricing-api")
+    Policy(api, previous, apply=True).run()
+    resource = api.client("pricing-api")
+    for name in ("pricing:read", "pricing:list", "pricing:manage"):
+        api.admin("DELETE", f"/clients/{resource['id']}/roles/" + name)
+    require(bool(Policy(api, desired(settings)).run()), "Existing realm reports missing Pricing policy")
+    command("policy", "apply")
+    require(not Policy(api, desired(settings)).run(), "Pricing policy reapply is a no-op")
+    require(snapshot(settings) == before, "Pricing policy update preserves subjects, clients, keys and credentials")
+    print("Existing Inventory-enabled realm upgraded to Pricing policy without identity or credential changes")
+
+
 def main():
     local = Local()
     settings = local.settings
@@ -180,6 +199,7 @@ def main():
     require(api.client("unrelated-smoke-client")["id"] == unrelated_id, "Unowned objects preserved")
     require(snapshot(settings) == before, "Policy update preserves identities, signing keys and credentials")
     declarative_policy(settings)
+    pricing_policy_update(settings)
     local.runner("machine")
     for client, secret in desired(settings)["_rentflow"]["clientSecrets"].items():
         if secret["rotatable"]:

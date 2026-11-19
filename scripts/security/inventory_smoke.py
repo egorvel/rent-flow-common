@@ -51,7 +51,7 @@ def main():
     require(not Policy(maintenance(settings), desired(settings)).run(), "Inventory tests restore all managed realm policy")
     require(snapshot(settings) == before, "Inventory acceptance preserves subjects, keys and credentials")
     print("Inventory security interoperability verification passed")
-    print("Combined acceptance remains pending Pricing Phase 3 and Reservation Phase 4; no full-suite acceptance is claimed.")
+    print("Pricing acceptance is available via --pricing; combined acceptance remains pending Reservation Phase 4.")
 
 
 if __name__ == "__main__":

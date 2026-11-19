@@ -42,8 +42,8 @@ When launching the applications locally:
 - Set `SERVER_PORT` to `8080` for Inventory, `8081` for Pricing, and `8082` for Reservation.
 - Set `INVENTORY_BASE_URL=http://localhost:8080` for Pricing and Reservation. Inventory must also
   be running for their cross-service operations.
-- Use `SPRING_PROFILES_ACTIVE=local` for Inventory and Reservation, including local Kafka topic
-  provisioning. Their default `KAFKA_BOOTSTRAP_SERVERS` is `localhost:9092`; Pricing's Redis defaults
+- Use `SPRING_PROFILES_ACTIVE=local` for all three applications. Inventory and Reservation include
+  local Kafka topic provisioning. Their default `KAFKA_BOOTSTRAP_SERVERS` is `localhost:9092`; Pricing's Redis defaults
   are `localhost:6379`.
 - Configure Inventory's `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI` as
   `http://auth.rentflow.test:8180/realms/rentflow-local` and
@@ -53,8 +53,18 @@ When launching the applications locally:
 Inventory now requires bearer tokens for business requests. CUSTOMER can read/list; STAFF can
 also manage items/statuses and inspect history. Apply the updated realm policy explicitly with
 `./scripts/local-keycloak.sh policy plan` and `./scripts/local-keycloak.sh policy apply`; these
-preserve users, subjects and credentials. Pricing and Reservation still lack outbound Client
-Credentials until Phases 3 and 4, so their Inventory-dependent workflows are temporarily blocked.
+preserve users, subjects and credentials. Pricing now authenticates its Inventory lookups in
+Phase 3. Reservation's Inventory-dependent workflows remain blocked until Phase 4.
+
+Pricing's local profile supplies the canonical development issuer/JWKS/token URLs. Override the
+standard Spring properties if you use a different issuer. Its outbound `pricing-service` secret
+must be delivered as a config-tree property, never an environment value. For an IDE run, create
+a private `.secrets/ide/` directory in the Pricing repository and a symlink named
+`spring.security.oauth2.client.registration.inventory.client-secret` to Common's protected
+`.secrets/security/pricing-service-client-secret`. Use Pricing's repository as the working
+directory; its local profile imports that directory automatically. The source file remains
+host-owned mode 0600. For a custom config-tree directory use `SPRING_CONFIG_IMPORT` as documented
+in [Pricing's setup guide](../rent-flow-pricing/README.md#security).
 
 Grafana, Prometheus, Loki, Tempo and Alloy are optional for ordinary development and debugger use.
 See [Shared observability](#shared-observability) when you want collected metrics, logs or traces.
@@ -116,9 +126,10 @@ Inventory application and real-provider permission/replay checks, run:
 
 ```bash
 ./scripts/security-smoke-test.sh --inventory
+./scripts/security-smoke-test.sh --pricing
 ```
 
-This additionally builds Inventory, injects its issuer/JWKS through a temporary test override,
+`--inventory` builds Inventory, injects its issuer/JWKS through a temporary test override,
 and tests browser CUSTOMER/STAFF tokens and both machine clients against the actual API. Inventory
 uses host port `28080`, configurable with `INVENTORY_SECURITY_SMOKE_PORT`.
 Application PostgreSQL/Kafka use isolated host ports `25432`/`29092`, configurable with
@@ -129,8 +140,17 @@ are pinned inside the test image. Smoke defaults to identity port `18180` and ca
 set `KEYCLOAK_SMOKE_PORT` and `KEYCLOAK_SMOKE_PKCE_PORT` to change them. Automated checks use their own
 hostname mapping and do not edit `/etc/hosts`. The browser runner currently supports Linux host networking.
 
-The full `./scripts/container-smoke-test.sh` remains a separate acceptance gate. Its Pricing and
-Reservation workflows are pending their application phases; the Inventory suite does not claim
+`--pricing` additionally builds the actual Pricing image and starts Redis. It tests both approved
+Pricing browser clients, customer reads/write denial, staff CRUD, cache authorization and real
+Pricing-to-Inventory machine tokens, reuse/renewal and safe failure/outage behavior. Pricing uses
+port `28081` (`PRICING_SECURITY_SMOKE_PORT`) and Redis `26379` (`PRICING_SECURITY_REDIS_PORT`).
+Test-only helpers bind loopback at Pricing's port + 1 and the PKCE callback port + 1. A transparent
+observer forwards actual Inventory requests and records only token digests and contract booleans
+in memory; no bearer values are recorded. Only the private test runner can request scoped restarts,
+provider stops/starts and database/cache comparisons through its temporary control capability.
+
+The full `./scripts/container-smoke-test.sh` remains a separate acceptance gate. Reservation
+workflows remain pending Phase 4; neither scoped suite claims
 combined acceptance. Base Compose issuer/caller wiring is deferred until that full gate can pass.
 For a local Inventory container before then, first start infrastructure and apply the realm policy,
 then supply its required settings through the existing Compose run environment mechanism:
@@ -145,6 +165,27 @@ docker compose run --rm --service-ports --use-aliases \
 Use your configured issuer/ports if overridden. Inventory needs no client secret or additional
 public-origin setting. Its local Swagger is available at `/swagger-ui.html`; API resource metadata
 GETs under `/.well-known/oauth-protected-resource` are public and derive URLs from the request.
+
+For a local Pricing container, start its infrastructure and Inventory first. Pricing's runtime
+UID is `10001`; a host-owned mode-0600 source secret alone is unreadable to that UID. Prepare a
+private recipient copy and grant read access on that copy (requires `setfacl`):
+
+```bash
+install -m 600 .secrets/security/pricing-service-client-secret .secrets/security/runtime/pricing-recipient-secret
+setfacl --modify user:10001:r .secrets/security/runtime/pricing-recipient-secret
+docker compose run --rm --no-deps --service-ports \
+  -e SPRING_PROFILES_ACTIVE=local \
+  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://auth.rentflow.test:8180/realms/rentflow-local \
+  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://auth.rentflow.test:8180/realms/rentflow-local/protocol/openid-connect/certs \
+  -e SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_KEYCLOAK_TOKEN_URI=http://auth.rentflow.test:8180/realms/rentflow-local/protocol/openid-connect/token \
+  --volume "$PWD/.secrets/security/runtime/pricing-recipient-secret:/run/secrets/spring.security.oauth2.client.registration.inventory.client-secret:ro" \
+  pricing
+```
+
+Keep the recipient directory private. Do not add an ACL to Common's original secret: its lifecycle
+tool checks owner-only file modes. Repeat delivery and restart only Pricing after explicit client
+rotation; the service does not hot-reload credentials. The automated suite uses an isolated
+UID-owned mode-0400 recipient copy instead, so it adds no `setfacl` host prerequisite.
 
 ## Local PostgreSQL startup
 
@@ -465,8 +506,8 @@ until a suitable workload baseline is available.
 
 ### Verification and lifecycle
 
-During the Inventory-first security rollout, the full suite below is pending Pricing Phase 3 and
-Reservation Phase 4. Use `./scripts/security-smoke-test.sh --inventory` for current Phase 2 evidence.
+During the security rollout, the full suite below is pending Reservation Phase 4. Use
+`./scripts/security-smoke-test.sh --inventory` or `--pricing` for scoped Phase 2/3 evidence.
 The final three-service business/observability requirements below remain required for restoration.
 
 ```bash

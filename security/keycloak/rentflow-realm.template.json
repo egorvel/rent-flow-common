@@ -21,7 +21,8 @@
         "composite": true,
         "composites": {
           "client": {
-            "inventory-api": ["inventory:read", "inventory:list"]
+            "inventory-api": ["inventory:read", "inventory:list"],
+            "pricing-api": ["pricing:read", "pricing:list"]
           }
         }
       },
@@ -30,12 +31,18 @@
         "composite": true,
         "composites": {
           "client": {
-            "inventory-api": ["inventory:read", "inventory:list", "inventory:manage", "inventory:history"]
+            "inventory-api": ["inventory:read", "inventory:list", "inventory:manage", "inventory:history"],
+            "pricing-api": ["pricing:read", "pricing:list", "pricing:manage"]
           }
         }
       }
     ],
     "client": {
+      "pricing-api": [
+        {"name": "pricing:read", "composite": false},
+        {"name": "pricing:list", "composite": false},
+        {"name": "pricing:manage", "composite": false}
+      ],
       "inventory-api": [
         {
           "name": "inventory:read",
@@ -592,6 +599,12 @@
   "defaultDefaultClientScopes": [],
   "defaultOptionalClientScopes": [],
   "clientScopeMappings": {
+    "pricing-api": [
+      {
+        "clientScope": "pricing-access",
+        "roles": ["pricing:read", "pricing:list", "pricing:manage"]
+      }
+    ],
     "inventory-api": [
       {
         "clientScope": "inventory-access",

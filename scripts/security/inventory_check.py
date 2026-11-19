@@ -12,6 +12,7 @@ from policy import Policy, desired
 class Inventory:
     def __init__(self, settings):
         self.port = int(settings.values["inventory_port"])
+        self.name = "Inventory"
 
     def request(self, method, path, token=None, data=None, key=None):
         headers = {"Accept": "application/json"}
@@ -31,14 +32,14 @@ class Inventory:
             result = json.loads(raw) if raw else None
             return response.status, dict((k.lower(), v) for k, v in response.getheaders()), result
         except (OSError, http.client.HTTPException, ValueError):
-            raise SecurityError("Inventory HTTP request failed") from None
+            raise SecurityError(self.name + " HTTP request failed") from None
         finally:
             connection.close()
 
     def expect(self, expected, method, path, token=None, data=None, key=None):
         status, headers, body = self.request(method, path, token, data, key)
-        require(status == expected, f"Inventory {method} {path.split('?')[0]} expected {expected}, received {status}")
-        require("set-cookie" not in headers, "Inventory API does not create browser sessions")
+        require(status == expected, f"{self.name} {method} {path.split('?')[0]} expected {expected}, received {status}")
+        require("set-cookie" not in headers, self.name + " API does not create browser sessions")
         if expected in (401, 403):
             require(headers.get("content-type", "").startswith("application/problem+json"), "Safe denial media type")
             if method != "HEAD":

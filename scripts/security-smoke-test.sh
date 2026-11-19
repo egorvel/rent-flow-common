@@ -7,12 +7,16 @@ if [[ "${1:-}" == --combined && $# == 1 ]]; then
         || { printf 'ERROR: combined smoke requires its isolated project/state\n' >&2; exit 1; }
     exec python3 scripts/security/smoke.py
 fi
-[[ $# == 0 || ( $# == 1 && "$1" == --inventory ) ]] \
-    || { printf 'Usage: %s [--combined|--inventory]\n' "$0" >&2; exit 1; }
-if [[ "${1:-}" == --inventory ]]; then
+[[ $# == 0 || ( $# == 1 && ( "$1" == --inventory || "$1" == --pricing ) ) ]] \
+    || { printf 'Usage: %s [--combined|--inventory|--pricing]\n' "$0" >&2; exit 1; }
+if [[ "${1:-}" == --inventory || "${1:-}" == --pricing ]]; then
     export INVENTORY_PORT="${INVENTORY_SECURITY_SMOKE_PORT:-28080}"
     export POSTGRES_PORT="${INVENTORY_SECURITY_POSTGRES_PORT:-25432}"
     export KAFKA_PORT="${INVENTORY_SECURITY_KAFKA_PORT:-29092}"
+fi
+if [[ "${1:-}" == --pricing ]]; then
+    export PRICING_PORT="${PRICING_SECURITY_SMOKE_PORT:-28081}"
+    export REDIS_PORT="${PRICING_SECURITY_REDIS_PORT:-26379}"
 fi
 export COMPOSE_PROJECT_NAME=rentflow-security-smoke
 export KEYCLOAK_REALM=rentflow-smoke
@@ -30,4 +34,6 @@ trap 'exit 143' TERM
 python3 scripts/security/smoke.py
 if [[ "${1:-}" == --inventory ]]; then
     python3 scripts/security/inventory_smoke.py
+elif [[ "${1:-}" == --pricing ]]; then
+    python3 scripts/security/pricing_smoke.py
 fi
