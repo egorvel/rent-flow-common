@@ -137,7 +137,7 @@ def main():
     require(not Policy(maintenance(settings), desired(settings)).run(), "Pricing tests restore managed realm policy")
     require(snapshot(settings) == before, "Pricing acceptance preserves subjects, client IDs, keys and original credentials")
     print("Pricing security interoperability verification passed")
-    print("Combined acceptance remains pending Reservation Phase 4; no full-suite acceptance is claimed.")
+    print("This scoped suite does not substitute for ./scripts/container-smoke-test.sh.")
 
 
 if __name__ == "__main__":

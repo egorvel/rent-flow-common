@@ -22,7 +22,8 @@
         "composites": {
           "client": {
             "inventory-api": ["inventory:read", "inventory:list"],
-            "pricing-api": ["pricing:read", "pricing:list"]
+            "pricing-api": ["pricing:read", "pricing:list"],
+            "reservation-api": ["reservation:create", "reservation:read", "reservation:list", "reservation:cancel"]
           }
         }
       },
@@ -32,12 +33,23 @@
         "composites": {
           "client": {
             "inventory-api": ["inventory:read", "inventory:list", "inventory:manage", "inventory:history"],
-            "pricing-api": ["pricing:read", "pricing:list", "pricing:manage"]
+            "pricing-api": ["pricing:read", "pricing:list", "pricing:manage"],
+            "reservation-api": ["reservation:create", "reservation:read:any", "reservation:list:any", "reservation:cancel:any", "reservation:manage"]
           }
         }
       }
     ],
     "client": {
+      "reservation-api": [
+        {"name": "reservation:create", "composite": false},
+        {"name": "reservation:read", "composite": false},
+        {"name": "reservation:list", "composite": false},
+        {"name": "reservation:cancel", "composite": false},
+        {"name": "reservation:read:any", "composite": false},
+        {"name": "reservation:list:any", "composite": false},
+        {"name": "reservation:cancel:any", "composite": false},
+        {"name": "reservation:manage", "composite": false}
+      ],
       "pricing-api": [
         {"name": "pricing:read", "composite": false},
         {"name": "pricing:list", "composite": false},
@@ -599,6 +611,12 @@
   "defaultDefaultClientScopes": [],
   "defaultOptionalClientScopes": [],
   "clientScopeMappings": {
+    "reservation-api": [
+      {
+        "clientScope": "reservation-access",
+        "roles": ["reservation:create", "reservation:read", "reservation:list", "reservation:cancel", "reservation:read:any", "reservation:list:any", "reservation:cancel:any", "reservation:manage"]
+      }
+    ],
     "pricing-api": [
       {
         "clientScope": "pricing-access",

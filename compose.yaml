@@ -151,6 +151,8 @@ services:
       context: ../rent-flow-inventory
       dockerfile: Dockerfile
     environment:
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}/protocol/openid-connect/certs
       MANAGEMENT_SERVER_ADDRESS: 0.0.0.0
       MANAGEMENT_OTLP_METRICS_EXPORT_ENABLED: "false"
       OBSERVABILITY_ENVIRONMENT: ${OBSERVABILITY_ENVIRONMENT:-local}
@@ -179,6 +181,10 @@ services:
       context: ../rent-flow-pricing
       dockerfile: Dockerfile
     environment:
+      SPRING_PROFILES_ACTIVE: local
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}/protocol/openid-connect/certs
+      SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_KEYCLOAK_TOKEN_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}/protocol/openid-connect/token
       MANAGEMENT_SERVER_ADDRESS: 0.0.0.0
       OBSERVABILITY_ENVIRONMENT: ${OBSERVABILITY_ENVIRONMENT:-local}
       TRACING_EXPORT_ENABLED: ${TRACING_EXPORT_ENABLED:-false}
@@ -193,6 +199,9 @@ services:
       REDIS_CONNECT_TIMEOUT: ${REDIS_CONNECT_TIMEOUT:-500ms}
       REDIS_COMMAND_TIMEOUT: ${REDIS_COMMAND_TIMEOUT:-200ms}
       PRICING_CACHE_TTL: ${PRICING_CACHE_TTL:-1h}
+    secrets:
+      - source: pricing_client_secret
+        target: spring.security.oauth2.client.registration.inventory.client-secret
     depends_on:
       inventory:
         condition: service_healthy
@@ -210,6 +219,9 @@ services:
       context: ../rent-flow-reservation
       dockerfile: Dockerfile
     environment:
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}/protocol/openid-connect/certs
+      SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_KEYCLOAK_TOKEN_URI: http://auth.rentflow.test:${KEYCLOAK_HTTP_PORT:-8180}/realms/${KEYCLOAK_REALM:-rentflow-local}/protocol/openid-connect/token
       MANAGEMENT_SERVER_ADDRESS: 0.0.0.0
       OBSERVABILITY_ENVIRONMENT: ${OBSERVABILITY_ENVIRONMENT:-local}
       TRACING_EXPORT_ENABLED: ${TRACING_EXPORT_ENABLED:-false}
@@ -223,6 +235,9 @@ services:
       SPRING_PROFILES_ACTIVE: local
       RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION: ${RESERVATION_CANCELLATION_EXPIRATION_HOLD_DURATION:-10m}
       RESERVATION_CANCELLATION_RELAY_ENABLED: ${RESERVATION_CANCELLATION_RELAY_ENABLED:-true}
+    secrets:
+      - source: reservation_client_secret
+        target: spring.security.oauth2.client.registration.inventory.client-secret
     depends_on:
       inventory:
         condition: service_healthy
@@ -341,6 +356,10 @@ networks:
     internal: true
 
 secrets:
+  pricing_client_secret:
+    file: ${SECURITY_STATE_DIR:-./.secrets/security}/runtime/pricing-recipient-secret
+  reservation_client_secret:
+    file: ${SECURITY_STATE_DIR:-./.secrets/security}/runtime/reservation-recipient-secret
   keycloak_postgres_admin_password:
     file: ${SECURITY_STATE_DIR:-./.secrets/security}/postgres-admin-password
   keycloak_db_password:

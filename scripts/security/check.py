@@ -11,6 +11,7 @@ import re
 import secrets
 import sys
 import threading
+import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 import jwt
@@ -29,10 +30,15 @@ PRICING_HUMAN_ROLES = {
     "CUSTOMER": {"pricing:read", "pricing:list"},
     "STAFF": {"pricing:read", "pricing:list", "pricing:manage"},
 }
+RESERVATION_HUMAN_ROLES = {
+    "CUSTOMER": {"reservation:create", "reservation:read", "reservation:list", "reservation:cancel"},
+    "STAFF": {"reservation:create", "reservation:read:any", "reservation:list:any", "reservation:cancel:any", "reservation:manage"},
+}
 
 
 def human_permissions(claims, user, audience):
-    roles = {"inventory-api": INVENTORY_HUMAN_ROLES, "pricing-api": PRICING_HUMAN_ROLES}
+    roles = {"inventory-api": INVENTORY_HUMAN_ROLES, "pricing-api": PRICING_HUMAN_ROLES,
+             "reservation-api": RESERVATION_HUMAN_ROLES}
     expected = roles[audience][FIXTURES[user]] if audience in roles else set()
     resource = claims.get("resource_access", {})
     require(set(resource) == ({audience} if expected else set()), "Human roles belong only to requested API")
@@ -59,7 +65,10 @@ def validate(api, token, audience, issuer=None, bearer=True):
     if bearer:
         require(claims["typ"] == "Bearer", "Access-token payload type")
     require(all(isinstance(claims[k], str) and claims[k] for k in ("iss", "sub", "azp")), "Identity claim types")
-    require(0 < claims["exp"] - claims["iat"] <= 300, "Five-minute token lifetime")
+    lifetime = claims["exp"] - claims["iat"]
+    # Keycloak 26.8.1 samples iat and exp separately in TokenManager. A second
+    # boundary can add one tick; policy read-back independently enforces 300s.
+    require(0 < lifetime <= 301, f"Five-minute token lifetime ({audience}, bearer={bearer}, seconds={lifetime})")
     return claims
 
 
@@ -171,7 +180,7 @@ class Callback:
         self.server.server_close()
 
 
-def browser(settings, inventory=False, pricing=False):
+def browser(settings, inventory=False, pricing=False, serve=False):
     from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
 
     machine(settings)
@@ -179,12 +188,13 @@ def browser(settings, inventory=False, pricing=False):
     callback_uri = f"http://127.0.0.1:{settings.pkce_port}/callback"
     with Callback(settings.pkce_port) as callback, sync_playwright() as playwright:
         chromium = playwright.chromium.launch(headless=True, args=["--no-proxy-server"])
+        sessions = {}
 
         def authorize(user, scope="inventory-access", changes=None, client="rentflow-pkce-check"):
             state, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             verifier = secrets.token_urlsafe(48)
             challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode().rstrip("=")
-            swagger = client in ("inventory-swagger", "pricing-swagger")
+            swagger = client in ("inventory-swagger", "pricing-swagger", "reservation-swagger")
             port = settings.values[client.replace("-swagger", "_port")] if swagger else None
             redirect = f"http://localhost:{port}/swagger-ui/oauth2-redirect.html" if swagger else callback_uri
             attempt = {"verifier": verifier, "nonce": nonce, "client": client, "redirect": redirect}
@@ -268,6 +278,7 @@ def browser(settings, inventory=False, pricing=False):
                     require(status == 200, "Code and verifier exchange")
                     audience = scope.replace("-access", "-api")
                     claims = validate(api, tokens["access_token"], audience)
+                    sessions[user, audience.removesuffix("-api"), "rentflow-pkce-check"] = tokens
                     require(audiences(claims) == {audience}, "Single requested human audience")
                     require(claims["azp"] == "rentflow-pkce-check", "Verification client azp")
                     human_permissions(claims, user, audience)
@@ -286,10 +297,8 @@ def browser(settings, inventory=False, pricing=False):
                     rejected(lambda: validate(api, tokens["id_token"], audience), "ID token is not an API credential")
                     if "refresh_token" in tokens:
                         rejected(lambda: validate(api, tokens["refresh_token"], audience), "Refresh token is not an API credential")
-                    status, _ = exchange(attempt)
-                    require(status == 400, "Authorization code cannot be reused")
             require(len(set(subjects.values())) == 3, "Three distinct human identities")
-            swagger_tokens = {"inventory": {}, "pricing": {}}
+            swagger_tokens = {"inventory": {}, "pricing": {}, "reservation": {}}
             for resource in swagger_tokens:
                 client, audience = resource + "-swagger", resource + "-api"
                 for user in FIXTURES:
@@ -305,6 +314,7 @@ def browser(settings, inventory=False, pricing=False):
                     require(identity["nonce"] == attempt["nonce"] and identity["sub"] == claims["sub"],
                             "Swagger ID token nonce and identity")
                     swagger_tokens[resource][user] = tokens
+                    sessions[user, resource, client] = tokens
 
             def renew(user, scope="inventory-access"):
                 status, tokens = exchange(authorize(user, scope))
@@ -326,6 +336,44 @@ def browser(settings, inventory=False, pricing=False):
                             {"code_challenge_method": "plain"},
                             {"redirect_uri": "http://127.0.0.1:1/unregistered"}]:
                 authorize("customer-a", changes=changes)
+            # Keycloak detaches the client session when a code is reused. Keep that
+            # negative test on a separate login so saved sessions can still refresh.
+            attempt = authorize("customer-a")
+            status, _ = exchange(attempt)
+            require(status == 200, "Separate code-reuse fixture authenticates")
+            status, _ = exchange(attempt)
+            require(status == 400, "Authorization code cannot be reused")
+            for (user, resource, client), tokens in sessions.items():
+                status, refreshed = api.token_response(client, grant_type="refresh_token", refresh_token=tokens["refresh_token"])
+                require(status == 200, "Live browser session refresh survives separate PKCE denial tests")
+                audience = resource + "-api"
+                claims = validate(api, refreshed["access_token"], audience)
+                require(claims["sub"] == subjects[user] and claims["azp"] == client and audiences(claims) == {audience},
+                        "Refreshed browser token preserves subject, client and exact audience")
+                human_permissions(claims, user, audience)
+                sessions[user, resource, client] = refreshed
+            if serve:
+                def session(user, resource, client="rentflow-pkce-check", forget=False, refresh=False):
+                    require(user in FIXTURES and resource in swagger_tokens and
+                            client in ("rentflow-pkce-check", resource + "-swagger"), "Unknown smoke identity/client")
+                    key = user, resource, client
+                    if forget:
+                        sessions.pop(key, None)
+                    tokens = sessions.get(key)
+                    if refresh or not tokens or jwt.decode(tokens["access_token"], options={"verify_signature": False})["exp"] < time.time() + 30:
+                        if tokens and tokens.get("refresh_token"):
+                            status, tokens = api.token_response(client, grant_type="refresh_token", refresh_token=tokens["refresh_token"])
+                            category = tokens.get("error") if isinstance(tokens, dict) else None
+                            category = category if category in {"invalid_grant", "invalid_scope", "invalid_client", "unauthorized_client", "unsupported_grant_type", "invalid_request"} else "unexpected"
+                            require(status == 200, f"Smoke browser refresh (HTTP {status}, {category})")
+                        else:
+                            status, tokens = exchange(authorize(user, resource + "-access" if client == "rentflow-pkce-check" else "", client=client))
+                            require(status == 200, "Smoke browser login")
+                        validate(api, tokens["access_token"], resource + "-api")
+                        sessions[key] = tokens
+                    return tokens["access_token"]
+                from smoke_proxy import serve_proxy
+                serve_proxy(settings, session)
         finally:
             chromium.close()
     print("Browser login, human identities, nonce/state and PKCE success/denial checks passed")
@@ -345,6 +393,11 @@ if __name__ == "__main__":
             browser(config, inventory=True)
         elif stage == "pricing":
             browser(config, inventory=True, pricing=True)
+        elif stage == "broker":
+            browser(config, serve=True)
+        elif stage == "reservation":
+            from reservation_check import verify_reservation
+            verify_reservation(config)
         else:
             raise SecurityError("Unknown verification stage")
     except Exception as error:

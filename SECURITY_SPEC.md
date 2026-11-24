@@ -8,7 +8,8 @@ This is Common's detailed design for Phases 0 and 1 of the
 Keycloak foundation. The user authorized Common implementation on 2026-10-31. Sibling services
 retain their own implementation phases. Inventory has now implemented Phase 2; its provider
 handoff is recorded below. Pricing has also implemented Phase 3; Common's Pricing handoff is
-described below. Reservation application security remains pending.
+described below. Reservation has implemented Phase 4 with direct immutable issuer/subject
+ownership; Common now wires all three secured services and their real-provider acceptance.
 
 The user selected `auth.rentflow.test` for host/container networking and Swagger UI plus a scripted
 browser-based PKCE verification flow. The implementation follows the defaults below, including
@@ -24,7 +25,7 @@ The existing stack has PostgreSQL 18.4, Kafka, Redis, three applications and opt
 Applications use separate accounts/schemas within the `rentflow` database. Management listeners
 are private to Docker. Inventory now enforces bearer authentication and its approved permission
 matrix. Pricing now enforces its own HTTP policy and acquires Client Credentials for Inventory.
-Reservation still needs Phase 4 security and outbound authentication.
+Reservation enforces its own/any permission matrix and authenticates Inventory claims.
 
 Phase 1 adds identity infrastructure without application dependencies, security filters, Maven
 Enforcer changes, outbound token forwarding or customer mapping. Swagger client registrations are
@@ -98,7 +99,20 @@ service design is agreed. Inventory and Pricing's implemented specifications def
 | `STAFF` | `inventory:read`, `inventory:list`, `inventory:manage`, `inventory:history` | `pricing:read`, `pricing:list`, `pricing:manage` |
 
 Staff receives its own explicit set without inheriting CUSTOMER. Neither role contains
-`inventory:reserve`. Reservation human API permissions remain undefined and ungranted.
+`inventory:reserve`. Reservation adds exactly these independent client roles:
+
+| Business role | `reservation-api` client roles |
+| --- | --- |
+| `CUSTOMER` | `reservation:create`, `reservation:read`, `reservation:list`, `reservation:cancel` |
+| `STAFF` | `reservation:create`, `reservation:read:any`, `reservation:list:any`, `reservation:cancel:any`, `reservation:manage` |
+
+Both create for themselves with `reservation:create`; there is no `reservation:create:any` grant.
+STAFF does not inherit CUSTOMER, and manage grants only PUT/DELETE. `reservation-access` allows
+exactly those eight roles for `reservation-swagger` and `rentflow-pkce-check`, filtered by held roles.
+Reservation uses verified `(iss, sub)` directly: response customerId is the opaque subject, with
+issuer stored internally on each row. POST/PUT owner fields are rejected; there is no mapping
+table, registration step, trusted customerId token claim or provider lookup. Staff PUT preserves
+the original owner/time/deadline, and DELETE neither releases Inventory nor emits cancellation.
 The `inventory-access` scope allows exactly the four human Inventory roles and maps only roles
 the authenticated identity holds. Both `inventory-swagger` and `rentflow-pkce-check` use that
 scope; no realm-role mapper or broad default scope is added.
@@ -174,18 +188,18 @@ have a single audience.
 
 ### Service handoffs
 
-| Owner | Decisions required before its enforcement phase |
+| Owner | Agreed handoff and current status |
 | --- | --- |
-| Inventory | Confirm machine permissions/transitions, endpoint matrix, human grants, machine identity checks, idempotency scope, docs/probe/management rules |
+| Inventory | Implemented read/list/manage/history, verified caller restrictions, Pricing read-only and Reservation all-RESERVED grants, scoped replay, metadata and private management |
 | Pricing | Implemented read/list/manage policy, human grants, application-scoped Inventory tokens and safe 502/503 failures; retain cache authorization and recipient restart on rotation |
-| Reservation | Ownership and `(iss, sub)` mapping/provisioning, legacy rows, staff-on-behalf policy, order references, replay scope, Inventory auth failures, worker behavior |
-| Common | Apply agreed service-role composites and test identities as service specifications become available; maintain this interoperability contract |
+| Reservation | Implemented exact issuer/subject ownership, scoped creation/replay, eight own/any/manage permissions, reserve-only Inventory calls and no-human-context cancellation/expiry workers |
+| Common | Supplies all three service-role composites, isolated test identities, issuer/recipient wiring and real-provider combined acceptance; maintains this contract |
 | Future Order | Define ownership and orchestration privileges before introducing its audience or service credentials |
 
 Inventory enforces the machine contract in Phase 2. Pricing implements inbound authorization and
 outbound Client Credentials together in Phase 3; its scoped Common checks exercise real Inventory
-lookups. Reservation does the same, including ownership, in Phase 4; its calls remain temporarily
-blocked until that phase completes. Callers never forward the customer's bearer token or trust `X-User-*`
+lookups. Reservation implements the same secured cutover, including ownership, in Phase 4.
+Callers never forward the customer's bearer token or trust `X-User-*`
 headers. Their token caches must use stable service principals and work without a human request.
 
 Phase 0 establishes this provider contract and dependency map. Inventory's service-side design
@@ -205,8 +219,7 @@ All four clients use Authorization Code with required PKCE `S256`, no secret, an
 or machine grant. No wildcard redirects/origins, password grant, implicit flow, self-registration,
 Remember Me or offline access. Proposed browser SSO idle/max limits are `30m`/`8h`. Keep Swagger
 authorization in memory with persistence disabled. Service-side Swagger wiring and exposure policy
-belong to Phases 2–4. Inventory and Pricing local Swagger are now wired; Reservation wiring
-remains pending. Phase 1 itself does not edit the service UIs.
+belong to Phases 2–4. All three local Swagger UIs are now wired. Phase 1 itself does not edit the service UIs.
 
 Each Swagger client receives one default API audience scope, with only that service's eventual
 human permissions in its role scope mapping. The verification client has three optional scopes:
@@ -226,14 +239,15 @@ Create optional local fixtures only through an explicit `fixtures apply` operati
 | Fixture | Assigned business role | Purpose |
 | --- | --- | --- |
 | `customer-a` | `CUSTOMER` | First distinct human subject |
-| `customer-b` | `CUSTOMER` | Second subject for future ownership-denial checks |
-| `staff` | `STAFF` | Inventory administration/history and Pricing administration; Reservation powers remain pending |
+| `customer-b` | `CUSTOMER` | Second subject for cross-customer ownership-denial checks |
+| `staff` | `STAFF` | Inventory/Pricing administration and explicit Reservation any-read/list/cancel/manage; creates only for itself |
 
 Fixtures have generated, independent passwords; no real person, credential or user record goes in
 the checked-in realm. Reapplying fixtures preserves subjects and passwords. Password changes
 require a separate explicit operation. No default customer/staff role is assigned to new users.
-Do not place a trusted `customerId` claim into tokens: Reservation owns the mapping to its domain
-IDs. Phase 1 proves distinct identities; cross-customer API denial is a Phase 4 gate.
+Do not place a trusted `customerId` claim into tokens: Reservation stores the verified subject
+directly as customerId alongside its exact issuer. No identity mapping/provisioning exists.
+Phase 4 checks cross-customer reads, page totals, cancellation and replay against real tokens.
 
 ## 6. Phase 1: runtime and persistence
 
@@ -294,7 +308,7 @@ they are local file delivery, not an encrypted secret manager.
 | Realm maintenance client secret | Explicit policy/fixture maintenance tooling only |
 | Local operator password | Human administrator only |
 | Pricing client secret | Provisioning tooling and Pricing's protected recipient config-tree file only |
-| Reservation client secret | Provisioning tooling; Reservation only when Phase 4 wires it |
+| Reservation client secret | Provisioning tooling and Reservation's protected recipient config-tree file only |
 | Fixture passwords | Local fixture/browser verification tooling only |
 
 A small Keycloak entrypoint reads mounted secret files into the supported configuration variables
@@ -330,13 +344,15 @@ and verifies new acquisition plus failure with the old secret. For this local si
 design, schedule a brief acquisition interruption; already issued access tokens remain valid
 until expiry. Production overlap/zero-downtime rotation is a later operational design.
 
-Pricing imports `/run/secrets/spring.security.oauth2.client.registration.inventory.client-secret`
+Both callers import `/run/secrets/spring.security.oauth2.client.registration.inventory.client-secret`
 through Spring config-tree delivery; its required property has no fallback secret. Only this
-business credential reaches Pricing, never the maintainer/other caller credentials. Common's
+business credential reaches its intended caller, never the maintainer/other caller credentials. Common's
 source secret remains host-owned mode 0600. Container delivery needs a separate recipient copy
 with a UID-10001 read ACL or ownership; do not add group/ACL bits to the original file that Common's
-owner-only checks protect. Refresh the recipient and restart Pricing after explicit rotation.
-IDE runs can use Pricing's optional local `.secrets/ide/` import with a user-owned mode-0600
+owner-only checks protect. `bootstrap` delivers UID-10001 mode-0400 copies using a network-disabled
+container that mounts only the selected copy. Existing setups use `recipients apply`; rotation
+refreshes only its affected copy. Recreate only that caller to load the replacement file.
+IDE runs can use each caller's optional local `.secrets/ide/` import with a user-owned mode-0600
 property file or symlink to Common's source secret. No credential values enter environment
 variables, command arguments or checked-in configuration.
 
@@ -408,13 +424,15 @@ These implementation deliverables are available in this repository.
 | `scripts/local-keycloak.sh` | Consistent lifecycle wrapper following existing local infrastructure scripts |
 | `scripts/security/` | Admin policy tool, explicit fixtures/rotation and browser PKCE/token checks |
 | `scripts/security-smoke-test.sh` | Isolated foundation checks; `--inventory` adds Inventory interoperability; `--pricing` adds actual Pricing-to-Inventory acceptance |
-| `scripts/security/inventory_smoke.py`, `inventory_check.py` | Temporary Inventory issuer/JWKS injection and real-token HTTP acceptance, without base Compose changes |
+| `scripts/security/inventory_smoke.py`, `inventory_check.py` | Isolated Inventory issuer/JWKS injection and real-token HTTP acceptance |
 | `scripts/security/pricing_smoke.py`, `pricing_check.py`, `pricing_observer.py` | Protected recipient delivery, actual Pricing/Inventory image checks, in-memory machine-token observations and scoped failure/renewal/outage control |
-| `scripts/container-smoke-test.sh` | Supply smoke realm/ports/temporary files, run foundation checks and existing business/observability checks |
+| `scripts/security/combined.py`, `smoke_proxy.py` | Capability-protected loopback proxy with real PKCE sessions retained in memory for combined HTTP checks |
+| `scripts/security/reservation_smoke.py`, `reservation_check.py` | Actual Reservation ownership/replay, scoped machine-key and dependency failure acceptance, with fixed isolated control actions |
+| `scripts/container-smoke-test.sh` | Supply smoke realm/ports/temporary files, run foundation/Reservation checks and existing business/observability checks |
 | `README.md`, security walkthrough | Setup, issuer/claims learning exercise, updates, recovery and phase limitations |
 
 Wrapper operations are `init`, `bootstrap`, `start`, `stop`, `status`, `logs`, `policy plan`,
-`policy apply`, `fixtures apply`, `verify`, `verify-browser`, and `rotate-client <client-id>`. `init` creates missing
+`policy apply`, `fixtures apply`, `recipients apply`, `verify`, `verify-browser`, and `rotate-client <client-id>`. `init` creates missing
 local secrets and renders configuration; `bootstrap` performs explicit first-time provisioning;
 `start` waits for health and detects policy drift; `stop` preserves identity data. Repeated starts
 preserve user subjects, credentials and keys. No implicit fixture creation, password change or
@@ -439,7 +457,7 @@ requirements for the combined smoke should remain Docker Compose, curl and Pytho
 | Database isolation | Runtime DB login is unprivileged; application credentials cannot connect to the identity DB; identity DB has no host port/application-network attachment |
 | PKCE success | Real browser login for both customers and staff; Code + `S256`; callback state and nonce checks; real token signature/issuer/audience/type/time validation |
 | PKCE denials | Unregistered redirect, missing PKCE, plain challenge, wrong verifier and code reuse fail; local callback rejects wrong state |
-| Human clients | Each Swagger registration has exactly its own audience mapping and exact callbacks/origins; both approved Inventory human clients expose the exact CUSTOMER/STAFF matrix and no reserve grant; other API tokens remain without permissions |
+| Human clients | Every Swagger registration has its own audience and exact callback/origin; all approved tools expose only the requested API's held CUSTOMER/STAFF permissions; no human inventory:reserve or machine/admin roles |
 | Machine tokens | Both callers get exactly `inventory-api`; Pricing has only `inventory:read`, Reservation only `inventory:reserve`; distinct `sub`/`azp`; no business/admin roles or refresh tokens |
 | Restricted grants | Wrong secret fails; caller cannot obtain another API audience/permission by requesting scopes; prohibited grants fail; resource registrations cannot issue tokens |
 | JWT checks | Test verifier rejects ID/refresh tokens, tampering and wrong audience/issuer; decoded claims alone never count as verification |
@@ -454,48 +472,50 @@ report assertion names plus approved non-secret claim summaries. Do not log call
 containing authorization codes. Use browser form login rather than enabling password grant for
 test convenience. Include a manual walkthrough for Swagger wiring once the service phases land.
 
-Inventory and Pricing human tokens now carry their approved CUSTOMER/STAFF permission sets.
-Reservation audience tests still yield no API permissions. The foundation suite proves provider
+All three API audiences now carry their approved CUSTOMER/STAFF permission sets. The foundation suite proves provider
 configuration and login; `--inventory` additionally proves real-token Inventory HTTP denials,
 machine restrictions and authorization before replay. `--pricing` adds actual Pricing-to-Inventory
 authentication, reuse/renewal, protected file delivery, failure mapping and denied-write state
-preservation. Reservation ownership/application integration remains later work. Full integrated
-real-provider key rotation and operational outage coverage remain Phase 5 gates.
+preservation. The complete combined suite adds Reservation ownership/replay, real machine claims,
+credential/permission/outage failures and existing cancellation/expiry/observability regressions.
+Broader real-provider signing-key rotation and operational acceptance remain Phase 5 gates.
 
 Whenever implementation changes `compose.yaml`, run `./scripts/container-smoke-test.sh` from
 Common's root and require **`Combined container smoke verification passed`**. A standalone
 Keycloak test does not satisfy Common's repository invariant. The isolated security suite is
 invoked by the combined suite; actual results must include both provider and regression checks.
 
-## 11. Remaining service work
+## 11. Integrated rollout and remaining work
 
-Common's implemented defaults are the permission names/authority prefix, dedicated identity
-database, approved Inventory human composites, 300-second token lifetime, administrative model
-and direct policy update procedure described here. Inventory has implemented the machine-operation
-contract in Phase 2. Pricing has implemented inbound security and outbound authentication together
-in Phase 3. Reservation must do so in Phase 4 to restore its Inventory workflows.
+Inventory, Pricing and Reservation have implemented their service security phases. Common now
+supplies the canonical issuer/JWKS/token URLs, each caller's own UID-readable config-tree file,
+all approved human composites and the unchanged narrow machine grants. No Keycloak health or
+startup dependency is added. All three normal local Swagger clients use PKCE.
 
-The implementation includes isolated runtime/persistence and secret setup, fresh realm and
-administrative provisioning, restricted grants and fixtures, direct policy updates, browser/token
-checks, combined smoke integration and [learning documentation](SECURITY_WALKTHROUGH.md).
+Common's combined runner uses real PKCE sessions through a loopback, capability-protected HTTP
+proxy. It injects only the selected fixture's correct audience token into isolated application
+requests, retaining access/refresh tokens in memory. Existing curl requests and observability
+API requests use this proxy; health/metadata retain their public rules. Staff setup uses explicit
+staff grants, and Reservation creates its own token-derived owner rather than accepting a
+customer ID. The proxy is test-only and accepts only the three configured loopback app origins.
 
-Common's Phase 2 handoff updates Inventory setup/read checks to use real browser-authenticated
-test identities and verifies provisioned machine grants against the secured service, without
-changing the caller applications. Pricing's Phase 3 handoff now additionally verifies the actual
-caller image, dedicated secret delivery, four customer reads, staff CRUD and Inventory token
-reuse/renewal and failures. The next application work is Reservation Phase 4. Track workflows blocked
-by unfinished callers explicitly; keep Inventory enforcement intact and do not claim full combined
-acceptance during that interval. Pricing integration is covered by Phase 3 checks, and Reservation
-integration and the full combined smoke suite in Phase 4. Phase 5 completes integrated acceptance
-and operational checks; Phase 6 covers future Order, and Phase 7 infrastructure hardening.
+Reservation C1 checks real subjects, owner-scoped totals/get/cancel, immutable staff replacement,
+self-owned staff creation, same-key subject isolation, approved-client replay and permission/deleted
+row denials. It verifies deterministic Inventory keys, actual reserve-only credentials and token
+reuse/renewal, invalid recipients, 401 eviction, 403 retention and provider outage/recovery. The
+existing cancellation/outbox/expiration, cache, persistence and full observability checks remain
+required. Phase-specific messages never replace `Combined container smoke verification passed`.
 
-The repository's full combined-smoke requirement for Compose changes remains in force. If that
-gate cannot pass during the intermediate rollout, defer affected Common Compose changes to
-Phase 4 and use existing environment/secret injection mechanisms for earlier checks. Phase-specific
-checks do not replace repository-required acceptance. For deployed environments requiring
-uninterrupted workflows, prepare callers before Inventory enforcement or coordinate compatible
-service deployments, as the plan requires. The partially secured rollout remains temporary and
-must never be described as production-ready.
+Reservation's consolidated V6 clears development reservations, cancellation outbox and replay
+rows; it creates no mapping table. Stop/drain old writers/workers, back up, and reconcile outstanding
+Inventory claims before a separately managed cutover. Deleting rows does not release equipment.
+Databases containing superseded V6/V7 history need separately authorized recreation, not Flyway
+repair or validation bypass. Common acceptance runs only on fresh disposable databases and
+never resets a developer database or mutates its realm.
+
+Phase 5 expands integrated signing-key rotation/operational evidence; Phase 6 covers future Order;
+Phase 7 remains required before production exposure. Local HTTP/dev-mode security and passing
+application tests do not supply production hardening or authenticate Kafka publishers.
 
 ## 12. Verification evidence — 2026-10-31
 
@@ -630,3 +650,66 @@ Phase 3 evidence, including the prior Inventory HTTP checks. Reservation Phase 4
 combined-smoke gate and Phase 5/7 integrated operational/production gates remain pending. This
 run does not claim **`Combined container smoke verification passed`**. Refresh protected recipient
 copies and restart Pricing after explicit credential rotation; no hot reload is promised.
+
+
+## 17. Reservation implementation handoff (C1) — 2026-11-24
+
+Reviewed Reservation's [requirements](../rent-flow-reservation/.specs/security/requirements.md),
+[design](../rent-flow-reservation/.specs/security/design.md),
+[C1 task](../rent-flow-reservation/.specs/security/tasks.md#c1--provision-common-policy-and-restore-complete-authenticated-workflows)
+and [implementation acceptance](../rent-flow-reservation/.specs/security/implementation-acceptance.md),
+including the latest direct issuer/subject ownership revision and consolidated V6 migration.
+Common declares exactly the eight Reservation roles and approved CUSTOMER/STAFF composites.
+Both use reservation:create for self-owned creation. Inventory/Pricing human policy and both
+narrow machine grants are preserved. Base Compose now supplies all three APIs' canonical URLs
+and each caller's own read-only config-tree recipient. Bootstrap/explicit delivery and rotation
+prepare UID 10001-readable copies while keeping original credentials host-owned and private.
+
+Verification executed from Common's root:
+
+```bash
+INVENTORY_PORT=38080 PRICING_PORT=38081 RESERVATION_PORT=38082 \
+POSTGRES_PORT=0 REDIS_PORT=0 KAFKA_PORT=49092 \
+KEYCLOAK_SMOKE_PORT=38180 KEYCLOAK_SMOKE_PKCE_PORT=38765 \
+GRAFANA_PORT=43000 OTLP_HTTP_PORT=44318 ./scripts/container-smoke-test.sh
+```
+
+The command exited 0 and reported **`Keycloak foundation smoke verification passed`**,
+**`Reservation security interoperability verification passed`** and
+**`Combined container smoke verification passed`**.
+
+- Real Code + PKCE covered all three fixture users and API audiences through the verification
+  client and all three Swagger registrations. Refresh verified preserved subject/client/audience
+  and exact held roles. Existing Pricing-enabled policy upgraded with read-back/no-op reapply,
+  preserving identities, keys and credentials. Foundation rotation and persistence gates passed.
+- Actual Reservation/Inventory images verified token-derived owners without mapping/provisioning,
+  owner-scoped page totals and foreign 404s, staff self-owned creation and any-cancel, immutable
+  ownership/creation time/deadline during replacement, and no release from administrative PUT/DELETE.
+  Equal external keys remained isolated by issuer/subject; approved-client replay, cancelled-row
+  snapshot replay, reduced-create-permission denial and deleted-row denial passed.
+- The observer verified actual signed reserve-only machine credentials, deterministic downstream
+  UUIDs, reuse across human subjects, renewal and absence of forwarded human/X-User credentials.
+  Real wrong-audience 401 evicted without immediate retry; real missing-permission 403 retained
+  the cached token. Invalid recipient credentials and provider outage/renewal produced safe 502/503,
+  preserved checked business/replay/logical outbox state, and recovered on explicit subsequent calls.
+  Both callers proved UID 10001 readability and a single appropriate read-only credential mount.
+- Authenticated cancellation/outbox/Kafka release and duplicate suppression, HELD expiry/CONFIRMED
+  exclusion, Pricing cache, telemetry shutdown, application/database/Redis recovery and retained-volume
+  recreation passed. Metrics, ECS logs, HTTP/JDBC traces, cross-service trace continuity, durable
+  outbox origin links, exemplars, dashboards and alerts passed before and after recreation.
+- Browser tokens remained in runner memory behind the capability-protected loopback proxy. The
+  code-reuse denial check uses a separate login: Keycloak intentionally detaches that client session
+  on reuse, so it cannot supply later refreshes. See its
+  [authorization-code implementation](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/grants/AuthorizationCodeGrantType.java#L81).
+  Policy read-back enforces 300-second lifetimes; token checks allow one clock tick between Keycloak's
+  separate issuance/expiration timestamp reads in
+  [TokenManager](https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/protocol/oidc/TokenManager.java#L1001).
+- Cleanup read-back found no smoke containers, proxy container, volumes, networks or private
+  credential directories. Python/JSON/shell syntax, local documentation links and whitespace
+  checks passed. Developer state and sibling source files were untouched.
+
+This completes Common's requested Reservation C1 gate on fresh disposable storage. Existing-data
+cutover for the destructive V6 remains separately managed as documented in section 11. The older
+optional observability demo does not acquire bearer tokens; its limitation is documented, while
+combined observability acceptance is authenticated. Broader Phase 5 operational/signing-key rotation
+and Phase 7 production hardening remain separate gates.

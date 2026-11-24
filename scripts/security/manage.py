@@ -8,7 +8,7 @@ from pathlib import Path
 import secrets
 import sys
 
-from common import Api, Local, SecurityError, maintenance, require, write_private
+from common import Api, Local, SecurityError, deliver_recipients, maintenance, require, write_private
 from policy import Policy, desired, ensure_user, realm_import
 
 
@@ -19,6 +19,7 @@ HELP = """Usage: scripts/local-keycloak.sh <operation>
   logs                     Follow bounded-level Keycloak logs.
   policy plan | apply      Report/reconcile Common-owned realm policy.
   fixtures apply           Create/preserve optional customer-a, customer-b and staff users.
+  recipients apply         Refresh the two private UID-10001 caller copies without rotating secrets.
   verify                   Verify real machine tokens and host/container issuer networking.
   verify-browser           Additionally verify real browser Code + PKCE using local fixtures.
   rotate-client CLIENT     Explicitly rotate pricing-service or reservation-service credentials.
@@ -73,6 +74,7 @@ def bootstrap(local):
     if complete.exists():
         ready(local)
         maintenance(settings).admin("GET")
+        deliver_recipients(local)
         print("Initialization already complete; identities and credentials preserved.")
         return
     ready(local, bootstrap=True)
@@ -112,6 +114,7 @@ def bootstrap(local):
     ready(local, recreate=True)
     maintenance(settings).admin("GET")
     settings.save("initialized", "Initialization complete; bootstrap account removed.\n")
+    deliver_recipients(local)
     print("Bootstrap complete; scoped maintenance works and global bootstrap access is removed.")
 
 
@@ -148,12 +151,13 @@ def rotate(local, client):
     status, _ = Api(settings).token_response(client, old)
     require(status == 401, "Old credential must fail token acquisition after rotation")
     settings.save(filename, new + "\n")
+    deliver_recipients(local, (client,))
     pending.unlink()
     for other, secret in credentials.items():
         if other != client and secret["rotatable"]:
             Api(settings).token(other, settings.secret(secret["file"]))
     print(f"Rotated {client}; previous secret rejected and other caller unaffected.")
-    print("Phase 3/4 callers must reload/restart with their recipient file after rotation.")
+    print("Recipient copy refreshed; recreate only the affected caller to load its new file.")
 
 
 def main():
@@ -195,6 +199,9 @@ def main():
             for user in desired(local.settings)["_rentflow"]["fixtures"]:
                 ensure_user(api, local.settings, user)
             print("Local fixtures applied; existing subjects/passwords preserved.")
+        elif args == ["recipients", "apply"]:
+            deliver_recipients(local)
+            print("Private caller recipient copies refreshed; source credentials preserved.")
         elif args in (["verify"], ["verify-browser"]):
             local.runner("machine" if args == ["verify"] else "browser")
             local.runner(network=True)

@@ -6,5 +6,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY scripts/security/common.py scripts/security/policy.py scripts/security/check.py ./
 COPY scripts/security/inventory_check.py ./
 COPY scripts/security/pricing_check.py scripts/security/pricing_observer.py ./
+COPY scripts/security/smoke_proxy.py ./
+COPY scripts/security/reservation_check.py ./
 COPY security/keycloak/ ./security/keycloak/
 ENTRYPOINT ["python3", "/check/check.py"]

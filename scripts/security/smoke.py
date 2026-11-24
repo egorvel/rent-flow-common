@@ -138,6 +138,24 @@ def pricing_policy_update(settings):
     print("Existing Inventory-enabled realm upgraded to Pricing policy without identity or credential changes")
 
 
+def reservation_policy_update(settings):
+    api = maintenance(settings)
+    before = snapshot(settings)
+    previous = desired(settings)
+    for role in previous["roles"]["realm"]:
+        role["composites"]["client"].pop("reservation-api")
+    previous["clientScopeMappings"].pop("reservation-api")
+    Policy(api, previous, apply=True).run()
+    resource = api.client("reservation-api")
+    for role in previous["roles"]["client"]["reservation-api"]:
+        api.admin("DELETE", f"/clients/{resource['id']}/roles/" + role["name"])
+    require(bool(Policy(api, desired(settings)).run()), "Existing realm detects missing Reservation policy")
+    command("policy", "apply")
+    require(not Policy(api, desired(settings)).run(), "Reservation second apply is a no-op")
+    require(snapshot(settings) == before, "Reservation policy upgrade preserves identities, keys and source credentials")
+    print("Existing Pricing-enabled realm upgraded to eight Reservation roles and exact composites")
+
+
 def main():
     local = Local()
     settings = local.settings
@@ -200,6 +218,7 @@ def main():
     require(snapshot(settings) == before, "Policy update preserves identities, signing keys and credentials")
     declarative_policy(settings)
     pricing_policy_update(settings)
+    reservation_policy_update(settings)
     local.runner("machine")
     for client, secret in desired(settings)["_rentflow"]["clientSecrets"].items():
         if secret["rotatable"]:

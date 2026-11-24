@@ -1,5 +1,11 @@
 # Observability demo
 
+The demo script predates bearer-token enforcement and does not yet acquire tokens. Its workload
+commands below cannot run against the current secured APIs. Use
+`./scripts/container-smoke-test.sh` for authenticated three-service observability verification;
+it operates on isolated disposable resources. `observability-smoke-test.py --ready-only` checks
+a running local observability stack without issuing business requests.
+
 `scripts/observability-demo.py` generates real application traffic so you can explore the
 provisioned Grafana dashboards, logs, traces, and alerts without issuing requests manually.
 It uses only Python's standard library and the existing Docker Compose stack.

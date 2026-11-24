@@ -51,7 +51,7 @@ def main():
     require(not Policy(maintenance(settings), desired(settings)).run(), "Inventory tests restore all managed realm policy")
     require(snapshot(settings) == before, "Inventory acceptance preserves subjects, keys and credentials")
     print("Inventory security interoperability verification passed")
-    print("Pricing acceptance is available via --pricing; combined acceptance remains pending Reservation Phase 4.")
+    print("Pricing acceptance is available via --pricing; the full gate is ./scripts/container-smoke-test.sh.")
 
 
 if __name__ == "__main__":

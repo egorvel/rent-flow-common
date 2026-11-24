@@ -14,7 +14,7 @@ from common import Api, require
 
 def main():
     config = settings()
-    require(config.realm == "rentflow-smoke" and config.values["project"] == "rentflow-security-smoke",
+    require(config.realm == "rentflow-smoke" and config.values["project"] in ("rentflow-security-smoke", "rentflow-common-smoke"),
             "Observer requires the isolated security smoke project")
     status, jwks = Api(config, loopback=False).request("GET", f"/realms/{config.realm}/protocol/openid-connect/certs")
     require(status == 200, "Observer public key retrieval")
@@ -23,7 +23,7 @@ def main():
     lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
+        def observe(self):
             if self.path == "/_checks/observations":
                 with lock:
                     body = json.dumps(observations).encode()
@@ -32,12 +32,13 @@ def main():
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if not self.path.startswith("/api/v1/inventory/"):
+            if not self.path.startswith("/api/v1/inventory/") or self.command not in ("GET", "PATCH"):
                 self.send_error(403)
                 return
             token = self.headers.get("Authorization", "").removeprefix("Bearer ")
             record = {"digest": hashlib.sha256(token.encode()).hexdigest(), "pricing_identity": False,
-                      "exact_grants": False, "expires_at": 0,
+                      "exact_grants": False, "reservation_identity": False, "reservation_grants": False,
+                      "expires_at": 0, "key": self.headers.get("Idempotency-Key"),
                       "user_headers": any(name.lower().startswith("x-user-") for name in self.headers)}
             try:
                 header = jwt.get_unverified_header(token)
@@ -49,11 +50,23 @@ def main():
                               exact_grants=audience == {"inventory-api"} and
                               claims.get("resource_access") == {"inventory-api": {"roles": ["inventory:read"]}} and
                               not claims.get("realm_access", {}).get("roles"), expires_at=claims["exp"])
+                record.update(reservation_identity=claims["azp"] == "reservation-service",
+                              reservation_grants=audience == {"inventory-api"} and
+                              claims.get("resource_access") == {"inventory-api": {"roles": ["inventory:reserve"]}} and
+                              not claims.get("realm_access", {}).get("roles"))
             except (jwt.PyJWTError, KeyError, TypeError, ValueError):
                 pass
             connection = http.client.HTTPConnection("inventory", 8080, timeout=5)
             try:
-                connection.request("GET", self.path, headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+                data = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                if self.command == "PATCH":
+                    batch = json.loads(data)
+                    record["all_reserved"] = bool(batch) and all(item.get("status") == "RESERVED" for item in batch)
+                headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+                for key in ("Content-Type", "Idempotency-Key", "traceparent"):
+                    if self.headers.get(key):
+                        headers[key] = self.headers[key]
+                connection.request(self.command, self.path, body=data, headers=headers)
                 response = connection.getresponse()
                 body = response.read(2_000_000)
                 record["status"] = response.status
@@ -76,6 +89,8 @@ def main():
 
         def log_message(self, *args):
             pass
+
+        do_GET = do_PATCH = observe
 
     ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
 

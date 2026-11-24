@@ -45,26 +45,24 @@ When launching the applications locally:
 - Use `SPRING_PROFILES_ACTIVE=local` for all three applications. Inventory and Reservation include
   local Kafka topic provisioning. Their default `KAFKA_BOOTSTRAP_SERVERS` is `localhost:9092`; Pricing's Redis defaults
   are `localhost:6379`.
-- Configure Inventory's `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI` as
-  `http://auth.rentflow.test:8180/realms/rentflow-local` and
-  `SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI` as that issuer plus
-  `/protocol/openid-connect/certs`. The hostname must resolve on the host for these requests too.
+- All three local profiles supply the canonical development issuer/JWKS URLs; Pricing and
+  Reservation also supply the token URL. Override standard Spring properties when using a
+  different issuer or ports. The hostname must resolve on the host too.
 
-Inventory now requires bearer tokens for business requests. CUSTOMER can read/list; STAFF can
-also manage items/statuses and inspect history. Apply the updated realm policy explicitly with
-`./scripts/local-keycloak.sh policy plan` and `./scripts/local-keycloak.sh policy apply`; these
-preserve users, subjects and credentials. Pricing now authenticates its Inventory lookups in
-Phase 3. Reservation's Inventory-dependent workflows remain blocked until Phase 4.
+All business APIs now require bearer tokens. Apply the current human roles explicitly with
+`./scripts/local-keycloak.sh policy plan` and `./scripts/local-keycloak.sh policy apply`;
+these preserve users, subjects and credentials. CUSTOMER can read Inventory/Pricing and create,
+read, list and cancel its own reservations. STAFF can administer Inventory/Pricing, read/list/
+cancel any reservation and replace/delete reservations. Staff creation is still self-owned.
+Reservation derives ownership directly from verified issuer/subject; do not send `customerId`.
 
-Pricing's local profile supplies the canonical development issuer/JWKS/token URLs. Override the
-standard Spring properties if you use a different issuer. Its outbound `pricing-service` secret
-must be delivered as a config-tree property, never an environment value. For an IDE run, create
-a private `.secrets/ide/` directory in the Pricing repository and a symlink named
-`spring.security.oauth2.client.registration.inventory.client-secret` to Common's protected
-`.secrets/security/pricing-service-client-secret`. Use Pricing's repository as the working
-directory; its local profile imports that directory automatically. The source file remains
-host-owned mode 0600. For a custom config-tree directory use `SPRING_CONFIG_IMPORT` as documented
-in [Pricing's setup guide](../rent-flow-pricing/README.md#security).
+Pricing and Reservation each need their own outbound client secret as a config-tree property.
+For an IDE run, create a private `.secrets/ide/` directory in each caller repository and a symlink
+named `spring.security.oauth2.client.registration.inventory.client-secret` to Common's protected
+`.secrets/security/pricing-service-client-secret` or `.secrets/security/reservation-service-client-secret`,
+respectively. Use that service repository as the working directory; its local profile imports
+this directory automatically. The source files stay host-owned mode 0600. Custom directories
+can be selected through `SPRING_CONFIG_IMPORT`.
 
 Grafana, Prometheus, Loki, Tempo and Alloy are optional for ordinary development and debugger use.
 See [Shared observability](#shared-observability) when you want collected metrics, logs or traces.
@@ -149,43 +147,41 @@ observer forwards actual Inventory requests and records only token digests and c
 in memory; no bearer values are recorded. Only the private test runner can request scoped restarts,
 provider stops/starts and database/cache comparisons through its temporary control capability.
 
-The full `./scripts/container-smoke-test.sh` remains a separate acceptance gate. Reservation
-workflows remain pending Phase 4; neither scoped suite claims
-combined acceptance. Base Compose issuer/caller wiring is deferred until that full gate can pass.
-For a local Inventory container before then, first start infrastructure and apply the realm policy,
-then supply its required settings through the existing Compose run environment mechanism:
+Run the full secured stack after provisioning Keycloak:
 
 ```bash
-docker compose run --rm --service-ports --use-aliases \
-  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://auth.rentflow.test:8180/realms/rentflow-local \
-  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://auth.rentflow.test:8180/realms/rentflow-local/protocol/openid-connect/certs \
-  inventory
+./scripts/local-keycloak.sh policy plan
+./scripts/local-keycloak.sh policy apply
+./scripts/local-keycloak.sh recipients apply
+docker compose up --build --detach --wait inventory pricing reservation
 ```
 
-Use your configured issuer/ports if overridden. Inventory needs no client secret or additional
-public-origin setting. Its local Swagger is available at `/swagger-ui.html`; API resource metadata
-GETs under `/.well-known/oauth-protected-resource` are public and derive URLs from the request.
+`bootstrap` also delivers these recipients automatically. `recipients apply` refreshes private
+runtime copies for existing installations. Compose mounts each caller's own copy read-only at
+`/run/secrets/spring.security.oauth2.client.registration.inventory.client-secret`. Copies belong
+to container UID 10001, mode 0400; their parent directory is private. The tool uses a short-lived
+container with no network to set ownership, so no host ACL utility is required. Original source
+files remain host-owned mode 0600. Explicit `rotate-client` refreshes only the affected recipient;
+force-recreate that caller afterward to load its new file. Credentials never enter Compose
+application environment values. Inventory needs no client secret or public-origin setting.
 
-For a local Pricing container, start its infrastructure and Inventory first. Pricing's runtime
-UID is `10001`; a host-owned mode-0600 source secret alone is unreadable to that UID. Prepare a
-private recipient copy and grant read access on that copy (requires `setfacl`):
+All three Swagger UIs at `/swagger-ui.html` use Code + PKCE and their own audience. Inventory's
+public GET metadata under `/.well-known/oauth-protected-resource` derives URLs from the request.
 
-```bash
-install -m 600 .secrets/security/pricing-service-client-secret .secrets/security/runtime/pricing-recipient-secret
-setfacl --modify user:10001:r .secrets/security/runtime/pricing-recipient-secret
-docker compose run --rm --no-deps --service-ports \
-  -e SPRING_PROFILES_ACTIVE=local \
-  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_ISSUER_URI=http://auth.rentflow.test:8180/realms/rentflow-local \
-  -e SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://auth.rentflow.test:8180/realms/rentflow-local/protocol/openid-connect/certs \
-  -e SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_KEYCLOAK_TOKEN_URI=http://auth.rentflow.test:8180/realms/rentflow-local/protocol/openid-connect/token \
-  --volume "$PWD/.secrets/security/runtime/pricing-recipient-secret:/run/secrets/spring.security.oauth2.client.registration.inventory.client-secret:ro" \
-  pricing
-```
+`./scripts/container-smoke-test.sh` is the full combined acceptance gate. It includes the
+foundation suite, Reservation real-provider ownership/replay/machine/failure checks and the
+existing cancellation, expiry, cache, persistence and observability checks. A private loopback
+proxy supplies the right real PKCE token to smoke HTTP requests, retaining tokens only in memory.
+It runs only against disposable smoke resources and is not an application gateway. Scoped
+`--inventory`/`--pricing` checks remain useful but do not replace the full gate.
 
-Keep the recipient directory private. Do not add an ACL to Common's original secret: its lifecycle
-tool checks owner-only file modes. Repeat delivery and restart only Pricing after explicit client
-rotation; the service does not hot-reload credentials. The automated suite uses an isolated
-UID-owned mode-0400 recipient copy instead, so it adds no `setfacl` host prerequisite.
+Before upgrading an existing Reservation database, read
+[Reservation's migration acceptance](../rent-flow-reservation/.specs/security/implementation-acceptance.md).
+Its consolidated V6 clears development reservations, replay records and the cancellation outbox.
+Stop/drain writers and workers, back up, and reconcile outstanding Inventory claims first;
+deleting Reservation rows does not release equipment. A database with superseded V6/V7 history
+needs separately authorized recreation, not Flyway repair or validation bypass. Common's smoke
+checks use fresh disposable databases and never reset developer data.
 
 ## Local PostgreSQL startup
 
@@ -369,10 +365,9 @@ Explore has provisioned Prometheus, Loki, and Tempo datasources. Grafana's Alert
 rules; external notification delivery is not configured. Dashboards and rules come from
 `observability/grafana/`; UI dashboard edits are disabled so changes stay in version control.
 
-For a ten-minute guided workload with cache reads, reservation replays, cancellations, expiration,
-and optional Redis/Inventory outages, see [the observability demo guide](OBSERVABILITY_DEMO.md).
-Run `python3 scripts/observability-demo.py --start --with-faults` to start it; omit `--with-faults`
-to generate traffic without stopping services.
+The [older observability demo](OBSERVABILITY_DEMO.md) describes a ten-minute guided workload.
+Its script does not yet acquire bearer tokens and cannot run against the secured APIs. Use the
+authenticated combined smoke below for current acceptance.
 
 The metrics pipeline scrapes every 15 seconds with a five-second timeout. Inventory, Pricing and
 Reservation expose health and Prometheus on internal management ports `8085`, `8086` and `8087`,
@@ -506,9 +501,9 @@ until a suitable workload baseline is available.
 
 ### Verification and lifecycle
 
-During the security rollout, the full suite below is pending Reservation Phase 4. Use
+The full suite below includes all three secured services. Use
 `./scripts/security-smoke-test.sh --inventory` or `--pricing` for scoped Phase 2/3 evidence.
-The final three-service business/observability requirements below remain required for restoration.
+The full gate also checks Reservation ownership, replay and outbound authentication.
 
 ```bash
 ./scripts/container-smoke-test.sh
@@ -525,13 +520,14 @@ recreates the stack and verifies telemetry persisted. It removes only its own co
 on exit. Python 3, Docker Compose and curl are required. Export custom application ports before
 invoking the combined test; Grafana credentials and port settings also support Compose's `.env`.
 
-To check a running local stack without recreating it:
+For readiness checks on a running local observability stack without recreating it:
 
 ```bash
-python3 scripts/observability-smoke-test.py
+python3 scripts/observability-smoke-test.py --ready-only
 ```
 
-This issues list requests to all three services and checks their traces/exemplars. Pass
+The full invocation runs inside the combined suite with its authenticated proxy. It issues
+list requests to all three services and checks their traces/exemplars. Pass
 `--cancellation-serial SERIAL` to additionally verify a recently completed cancellation's logs, origin
 link and publication/consumption trace. `--pricing-creation-trace TRACE_ID` and
 `--reservation-creation-trace TRACE_ID` check existing creation traces for Inventory continuity.

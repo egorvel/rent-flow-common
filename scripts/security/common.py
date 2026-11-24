@@ -36,6 +36,21 @@ def write_private(path, value):
     temporary.replace(path)
 
 
+def deliver_recipients(local, clients=("pricing-service", "reservation-service"), invalid=False):
+    """Deliver only a selected caller's copy; original host-owned credentials stay private."""
+    for client in clients:
+        require(client in ("pricing-service", "reservation-service"), "Unknown recipient")
+        path = local.settings.state / "runtime" / (client.removesuffix("-service") + "-recipient-secret")
+        value = "invalid-smoke-credential" if invalid else local.settings.secret(client + "-client-secret")
+        require(not invalid or local.settings.realm == "rentflow-smoke", "Invalid credentials are smoke-only")
+        write_private(path, value + "\n")
+        result = subprocess.run(["docker", "run", "--rm", "--network", "none", "--read-only", "--user", "0",
+            "--volume", str(path) + ":/recipient:rw", "--entrypoint", "sh",
+            local.config["services"]["rentflow-postgres"]["image"], "-ec",
+            "chown 10001:10001 /recipient; chmod 0400 /recipient"], cwd=ROOT)
+        require(result.returncode == 0, "Recipient file ownership setup failed")
+
+
 class Settings:
     def __init__(self, values, state):
         self.values = values

@@ -18,7 +18,7 @@ readonly CANCELLATION_SOURCE_TOPIC="rentflow.reservation.cancelled.v1"
 readonly CANCELLATION_DLT_TOPIC="rentflow.inventory.reservation-cancellation.dlt.v1"
 readonly CANCELLATION_GROUP="rentflow.inventory.reservation-cancellation.v1"
 readonly CANCELLATION_CREATION_KEY="d880f919-2b5c-4f7e-a56d-e047e7d932a6"
-readonly CANCELLATION_CREATION_REQUEST='{"customerId":"SMOKE-CUSTOMER","orderId":"SMOKE-ORDER","items":[{"serialNumber":"SMOKE-CANCEL-001","startDate":"9999-12-30","endDate":"9999-12-31"}]}'
+readonly CANCELLATION_CREATION_REQUEST='{"orderId":"SMOKE-ORDER","items":[{"serialNumber":"SMOKE-CANCEL-001","startDate":"9999-12-30","endDate":"9999-12-31"}]}'
 readonly CANCELLATION_ITEM_RESERVED='{"serialNumber":"SMOKE-CANCEL-001","type":"Industrial drill","name":"Cancellation smoke drill","status":"RESERVED"}'
 readonly CANCELLATION_ITEM_AVAILABLE='{"serialNumber":"SMOKE-CANCEL-001","type":"Industrial drill","name":"Cancellation smoke drill","status":"AVAILABLE"}'
 readonly EXPIRATION_SERIAL_NUMBER="SMOKE-EXPIRE-001"
@@ -44,6 +44,7 @@ export INVENTORY_PORT PRICING_PORT RESERVATION_PORT
 export KEYCLOAK_REALM=rentflow-smoke
 export KEYCLOAK_HTTP_PORT="${KEYCLOAK_SMOKE_PORT:-18180}"
 export KEYCLOAK_PKCE_PORT="${KEYCLOAK_SMOKE_PKCE_PORT:-18765}"
+export SMOKE_HTTP_PROXY="http://127.0.0.1:$((KEYCLOAK_PKCE_PORT + 2))"
 export SECURITY_STATE_DIR
 SECURITY_STATE_DIR="$(mktemp -d /tmp/rentflow-common-security.XXXXXXXX)"
 
@@ -61,18 +62,26 @@ cleanup() {
 }
 
 finish_cleanup() {
+    docker rm --force "${PROJECT_NAME}-security-proxy" >/dev/null 2>&1 || true
     cleanup
     python3 -c 'import shutil,sys; shutil.rmtree(sys.argv[1])' "$SECURITY_STATE_DIR"
 }
 
 diagnose_failure() {
     compose ps >&2 || true
+    docker logs --tail 12 "${PROJECT_NAME}-security-proxy" >&2 || true
+    compose logs --tail 25 inventory pricing reservation >&2 || true
     compose logs --tail 60 rentflow-alloy rentflow-prometheus rentflow-loki rentflow-tempo rentflow-grafana >&2 || true
 }
 
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
     exit 1
+}
+
+auth_curl() {
+    command curl --noproxy "" --proxy "$SMOKE_HTTP_PROXY" \
+        --proxy-header "@${SECURITY_STATE_DIR}/runtime/smoke-proxy-header" "$@"
 }
 
 info() {
@@ -112,7 +121,7 @@ wait_for_http_status() {
     local actual_status
 
     while ((attempt <= max_attempts)); do
-        actual_status="$(curl \
+        actual_status="$(auth_curl \
             --silent \
             --output /dev/null \
             --write-out '%{http_code}' \
@@ -134,7 +143,7 @@ assert_http_status() {
     local max_time="${3:-2}"
     local actual_status
 
-    actual_status="$(curl \
+    actual_status="$(auth_curl \
         --silent \
         --output /dev/null \
         --write-out '%{http_code}' \
@@ -277,7 +286,7 @@ assert_cancellation_topics() {
 create_cancellation_item() {
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -294,7 +303,7 @@ create_cancellation_reservation() {
     local response
     local remainder
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -317,7 +326,7 @@ create_cancellation_reservation() {
 cancel_reservation() {
     local status
 
-    status="$(curl \
+    status="$(auth_curl \
         --silent \
         --output /dev/null \
         --write-out '%{http_code}' \
@@ -345,7 +354,7 @@ assert_cancellation_outbox_count() {
 assert_cancellation_reservation_readable() {
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -361,7 +370,7 @@ wait_for_cancellation_item() {
     local response
 
     while ((attempt <= 60)); do
-        response="$(curl \
+        response="$(auth_curl \
             --silent \
             --show-error \
             --max-time 2 \
@@ -392,7 +401,7 @@ wait_for_cancellation_group() {
 }
 
 cancellation_history() {
-    curl \
+    auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -403,7 +412,7 @@ cancellation_history() {
 reserve_cancellation_item_again() {
     local status
 
-    status="$(curl \
+    status="$(auth_curl \
         --silent \
         --output /dev/null \
         --write-out '%{http_code}' \
@@ -461,7 +470,7 @@ assert_cancellation_flow() {
 create_expiration_item() {
     local request="$1"
 
-    curl \
+    auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -477,7 +486,7 @@ create_expiration_reservation() {
     local idempotency_key="$2"
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -485,20 +494,20 @@ create_expiration_reservation() {
         --request POST \
         --header 'Content-Type: application/json' \
         --header "Idempotency-Key: $idempotency_key" \
-        --data "{\"customerId\":\"SMOKE-CUSTOMER\",\"orderId\":\"SMOKE-EXPIRATION\",\"items\":[{\"serialNumber\":\"$serial_number\",\"startDate\":\"9999-12-30\",\"endDate\":\"9999-12-31\"}]}" \
+        --data "{\"orderId\":\"SMOKE-EXPIRATION\",\"items\":[{\"serialNumber\":\"$serial_number\",\"startDate\":\"9999-12-30\",\"endDate\":\"9999-12-31\"}]}" \
         "${RESERVATION_BASE_URL}/api/v1/reservations")"
     printf '%s' "$response" | jq -er '.[0] | select(.status == "HELD" and (.holdExpiresAt | type == "string")) | .id'
 }
 
 confirm_expiration_reservation() {
-    curl \
+    auth_curl \
         --fail \
         --silent \
         --show-error \
         --max-time 10 \
         --request PUT \
         --header 'Content-Type: application/json' \
-        --data "{\"serialNumber\":\"$EXPIRATION_CONFIRMED_SERIAL_NUMBER\",\"customerId\":\"SMOKE-CUSTOMER\",\"orderId\":\"SMOKE-EXPIRATION\",\"startDate\":\"9999-12-30\",\"endDate\":\"9999-12-31\",\"status\":\"CONFIRMED\"}" \
+        --data "{\"serialNumber\":\"$EXPIRATION_CONFIRMED_SERIAL_NUMBER\",\"orderId\":\"SMOKE-EXPIRATION\",\"startDate\":\"9999-12-30\",\"endDate\":\"9999-12-31\",\"status\":\"CONFIRMED\"}" \
         "${RESERVATION_BASE_URL}/api/v1/reservations/${EXPIRATION_CONFIRMED_RESERVATION_ID}" >/dev/null
 }
 
@@ -509,7 +518,7 @@ wait_for_reservation_status() {
     local status
 
     while ((attempt <= 45)); do
-        status="$(curl \
+        status="$(auth_curl \
             --fail \
             --silent \
             --show-error \
@@ -533,7 +542,7 @@ wait_for_inventory_status() {
     local status
 
     while ((attempt <= 60)); do
-        status="$(curl \
+        status="$(auth_curl \
             --fail \
             --silent \
             --show-error \
@@ -588,7 +597,7 @@ assert_expiration_flow() {
     wait_for_inventory_status "$EXPIRATION_CONFIRMED_SERIAL_NUMBER" "RESERVED"
     assert_expiration_outbox_counts
 
-    history="$(curl \
+    history="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -711,7 +720,7 @@ assert_reservation_runtime_image() {
 create_item() {
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -727,7 +736,7 @@ create_item() {
 assert_item_readable() {
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -740,7 +749,7 @@ assert_item_readable() {
 create_pricing() {
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -757,7 +766,7 @@ create_pricing() {
 assert_pricing_readable() {
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -770,7 +779,7 @@ assert_pricing_readable() {
 assert_pricing_cached() {
     local response
 
-    response="$(curl \
+    response="$(auth_curl \
         --fail \
         --silent \
         --show-error \
@@ -797,6 +806,7 @@ compose config --quiet
 
 info "Verifying isolated Keycloak provisioning, PKCE, machine grants and persistence"
 ./scripts/security-smoke-test.sh --combined
+python3 scripts/security/combined.py start
 
 info "Building the Inventory, Pricing, and Reservation runtime images"
 compose build inventory pricing reservation
@@ -837,6 +847,9 @@ assert_pricing_runtime_image
 assert_reservation_runtime_image
 assert_cancellation_topics
 
+info "Verifying actual Reservation provider policy, ownership, replay and outbound authentication"
+python3 scripts/security/reservation_smoke.py
+
 info "Verifying asynchronous reservation cancellation and durable duplicate suppression"
 assert_cancellation_flow
 
@@ -870,6 +883,7 @@ compose restart inventory pricing reservation
 wait_for_service_health inventory 120
 wait_for_service_health pricing 120
 wait_for_service_health reservation 120
+wait_for_service_health rentflow-keycloak 120
 assert_item_readable
 assert_pricing_readable
 assert_cancellation_reservation_readable
@@ -920,6 +934,7 @@ wait_for_service_health rentflow-kafka 90
 wait_for_service_health inventory 120
 wait_for_service_health pricing 120
 wait_for_service_health reservation 120
+wait_for_service_health rentflow-keycloak 120
 assert_item_readable
 assert_pricing_readable
 assert_pricing_cached

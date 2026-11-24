@@ -5,6 +5,7 @@ import argparse
 import base64
 import http.client
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -15,8 +16,17 @@ import urllib.request
 import uuid
 
 
-def request(url, headers=None):
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=10) as response:
+def request(url, headers=None, authenticated=False):
+    incoming = urllib.request.Request(url, headers=headers or {})
+    proxy = os.environ.get("SMOKE_HTTP_PROXY")
+    if proxy and authenticated:
+        capability = (Path(os.environ["SECURITY_STATE_DIR"]) / "smoke-proxy-key").read_text().strip()
+        incoming.add_header("X-Smoke-Control", capability)
+        incoming.set_proxy(urllib.parse.urlsplit(proxy).netloc, "http")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    else:
+        opener = urllib.request.build_opener()
+    with opener.open(incoming, timeout=10) as response:
         return json.load(response)
 
 
@@ -129,7 +139,7 @@ def main():
     def exemplar(trace_id, service, endpoint, headers):
         # Repeat after Micrometer's exemplar sampling interval if another request
         # won the first sample. The supplied trace keeps a single test identity.
-        request(endpoint, headers)
+        request(endpoint, headers, authenticated=True)
         payload = proxy("prometheus", "/api/v1/query_exemplars", {
             "query": f'http_server_requests_seconds_bucket{{service="{service}"}}',
             "start": time.time() - 300, "end": time.time()})
@@ -141,7 +151,7 @@ def main():
         service = "rent-flow-" + job
         endpoint = f"http://127.0.0.1:{services[job]['ports'][0]['published']}/api/v1/{route}"
         headers = {"traceparent": f"00-{trace_id}-{uuid.uuid4().hex[:16]}-01"}
-        request(endpoint, headers)
+        request(endpoint, headers, authenticated=True)
         eventually(job + " HTTP/JDBC trace through Alloy and Tempo", lambda:
                    trace_with_sql(trace_id, service))
         eventually(job + " Prometheus exemplar linked to Tempo", lambda:
