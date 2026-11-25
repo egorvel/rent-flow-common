@@ -3,8 +3,7 @@
 Design date: 2026-10-30. Common implementation authorized: 2026-10-31.
 Status: Common Phases 0 and 1 implemented and verified on 2026-10-31.
 
-This is Common's detailed design for Phases 0 and 1 of the
-[RentFlow security plan](../SECURITY_PLAN.md). It proposes the shared contract and the local
+This document defines Common's shared security contract and the local
 Keycloak foundation. The user authorized Common implementation on 2026-10-31. Sibling services
 retain their own implementation phases. Inventory has now implemented Phase 2; its provider
 handoff is recorded below. Pricing has also implemented Phase 3; Common's Pricing handoff is
@@ -569,7 +568,7 @@ Compose configuration and the regular developer realm were unchanged by this ref
 
 Reviewed Inventory's [design](../rent-flow-inventory/.specs/security/design.md),
 [Common task C1](../rent-flow-inventory/.specs/security/tasks.md#c1--common-policy-and-real-provider-interoperability-handoff)
-and [implementation acceptance](../rent-flow-inventory/.specs/security/implementation-acceptance.md),
+and [regression test entry points](../rent-flow-inventory/.specs/security/tasks.md#regression-test-entry-points),
 including the final native-metadata, typed authorization and annotation-owned OpenAPI amendments.
 Added list/manage/history roles, approved CUSTOMER/STAFF composites and the human Inventory scope
 mapping. Exact Pricing read-only and Reservation reserve-only audience/grant contracts are retained.
@@ -608,7 +607,7 @@ its repository; this section records the separately requested Common evidence.
 Reviewed Pricing's [requirements](../rent-flow-pricing/.specs/security/requirements.md),
 [design](../rent-flow-pricing/.specs/security/design.md),
 [C1 task](../rent-flow-pricing/.specs/security/tasks.md#c1--apply-common-policy-and-verify-actual-pricing-interoperability)
-and [implementation acceptance](../rent-flow-pricing/.specs/security/implementation-acceptance.md),
+and [verification evidence](../rent-flow-pricing/.specs/security/tasks.md#verification-evidence),
 including the final subject normalization, audience-entry fix, Boot client registration/storage,
 transport properties, request-attribute principal and optional IDE config-tree amendments.
 Added pricing:read/list/manage, explicit CUSTOMER read/list and STAFF read/list/manage composites,
@@ -657,7 +656,7 @@ copies and restart Pricing after explicit credential rotation; no hot reload is 
 Reviewed Reservation's [requirements](../rent-flow-reservation/.specs/security/requirements.md),
 [design](../rent-flow-reservation/.specs/security/design.md),
 [C1 task](../rent-flow-reservation/.specs/security/tasks.md#c1--provision-common-policy-and-restore-complete-authenticated-workflows)
-and [implementation acceptance](../rent-flow-reservation/.specs/security/implementation-acceptance.md),
+and [verification evidence](../rent-flow-reservation/.specs/security/design.md#115-verification-evidence-and-ac-coverage),
 including the latest direct issuer/subject ownership revision and consolidated V6 migration.
 Common declares exactly the eight Reservation roles and approved CUSTOMER/STAFF composites.
 Both use reservation:create for self-owned creation. Inventory/Pricing human policy and both
